@@ -18,32 +18,23 @@ export async function upsertPricePoints(points: {
   ledger: number; timestamp: Date; eventId?: string
 }[]): Promise<number> {
   if (points.length === 0) return 0
-  let inserted = 0
-  for (const p of points) {
-    try {
-      await prisma.pricePoint.upsert({
-        where: { eventId: p.eventId ?? `${p.pairKey}-${p.ledger}-${p.timestamp.getTime()}-${Math.random()}` },
-        create: {
-          assetA: p.assetA,
-          assetB: p.assetB,
-          pairKey: p.pairKey,
-          source: p.source,
-          poolId: p.poolId,
-          price: p.price,
-          baseVolume: p.baseVolume,
-          counterVolume: p.counterVolume,
-          ledger: p.ledger,
-          timestamp: p.timestamp,
-          eventId: p.eventId,
-        },
-        update: {},
-      })
-      inserted++
-    } catch {
-      // skip duplicates
-    }
-  }
-  return inserted
+  const result = await prisma.pricePoint.createMany({
+    data: points.map(p => ({
+      assetA: p.assetA,
+      assetB: p.assetB,
+      pairKey: p.pairKey,
+      source: p.source,
+      poolId: p.poolId ?? null,
+      price: p.price,
+      baseVolume: p.baseVolume,
+      counterVolume: p.counterVolume,
+      ledger: p.ledger,
+      timestamp: p.timestamp,
+      eventId: p.eventId ?? null,
+    })),
+    skipDuplicates: true,
+  })
+  return result.count
 }
 
 export async function getIndexerCursor(id: string): Promise<string | null> {

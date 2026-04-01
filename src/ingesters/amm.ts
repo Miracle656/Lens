@@ -7,22 +7,25 @@ const horizonServer = new Horizon.Server(config.horizon.url)
 
 async function fetchPools(pair: WatchedPair): Promise<any[]> {
   try {
+    // Use Horizon's reserves filter to find pools for this specific pair
+    const assetAStr = pair.assetA.issuer
+      ? `${pair.assetA.code}:${pair.assetA.issuer}`
+      : 'native'
+    const assetBStr = pair.assetB.issuer
+      ? `${pair.assetB.code}:${pair.assetB.issuer}`
+      : 'native'
+
+    const params = new URLSearchParams()
+    params.append('reserves[]', assetAStr)
+    params.append('reserves[]', assetBStr)
+    params.set('limit', '10')
+
     const response = await fetch(
-      `${config.horizon.url}/liquidity_pools?limit=50`
+      `${config.horizon.url}/liquidity_pools?${params.toString()}`
     )
     const data = await response.json() as any
     if (!data._embedded?.records) return []
-
-    return data._embedded.records.filter((pool: any) => {
-      if (!pool.reserves || pool.reserves.length !== 2) return false
-      const codes = pool.reserves.map((r: any) =>
-        r.asset === 'native' ? 'XLM' : r.asset.split(':')[0]
-      )
-      return (
-        (codes[0] === pair.assetA.code && codes[1] === pair.assetB.code) ||
-        (codes[0] === pair.assetB.code && codes[1] === pair.assetA.code)
-      )
-    })
+    return data._embedded.records
   } catch (err) {
     console.error(`[amm] Failed to fetch pools for ${pair.pairKey}:`, (err as Error).message)
     return []

@@ -78,14 +78,27 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
   vwap1m: number; vwap5m: number; vwap1h: number; vwap24h: number
   priceChange24h: number; sources: number
 }> {
-  const [vwap1m, vwap5m, vwap1h, vwap24h, sdexVwap24h, ammVwap24h, priceChange24h] = await Promise.all([
+  const [vwap1m, vwap5m, vwap1h, vwap24h, sdexVwap24h, priceChange24h, ammSpotResult] = await Promise.all([
     calculateVWAP(pairKey, 1),
     calculateVWAP(pairKey, 5),
     calculateVWAP(pairKey, 60),
     calculateVWAP(pairKey, 1440),
     calculateVWAP(pairKey, 1440, 'SDEX'),
-    calculateVWAP(pairKey, 1440, 'AMM'),
     getPriceChange24h(pairKey),
+    // AMM price: latest spot_price averaged across pools for this pair
+    pgPool.query(
+      `SELECT AVG(spot_price::numeric) AS amm_price
+       FROM (
+         SELECT DISTINCT ON (ps.pool_id) ps.spot_price
+         FROM pool_snapshots ps
+         WHERE ps.pool_id IN (
+           SELECT DISTINCT pool_id FROM price_points
+           WHERE pair_key = $1 AND source = 'AMM' AND pool_id IS NOT NULL
+         )
+         ORDER BY ps.pool_id, ps.timestamp DESC
+       ) latest`,
+      [pairKey]
+    ),
   ])
 
   const volResult = await pgPool.query(
@@ -114,10 +127,12 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
     [pairKey]
   )
 
+  const ammPrice = parseFloat(ammSpotResult.rows[0]?.amm_price ?? '0')
+
   return {
-    price: vwap1h || vwap24h || 0,
+    price: vwap1h || vwap24h || ammPrice || 0,
     sdexPrice: sdexVwap24h,
-    ammPrice: ammVwap24h,
+    ammPrice,
     volume24h: sdexVolume24h + ammVolume24h,
     sdexVolume24h,
     ammVolume24h,

@@ -10,8 +10,13 @@ function makePairKey(a: string, b: string): string {
 }
 
 function findPair(assetA: string, assetB: string) {
-  const key = makePairKey(assetA, assetB)
-  return config.pairs.find(p => p.pairKey === key)
+  const cA = assetA.split(':')[0].toUpperCase()
+  const cB = assetB.split(':')[0].toUpperCase()
+  return config.pairs.find(p => {
+    const pA = p.assetA.code.toUpperCase()
+    const pB = p.assetB.code.toUpperCase()
+    return (cA === pA && cB === pB) || (cA === pB && cB === pA)
+  })
 }
 
 export async function registerRESTRoutes(app: FastifyInstance) {
