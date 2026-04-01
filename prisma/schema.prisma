@@ -8,7 +8,7 @@ datasource db {
 }
 
 model PricePoint {
-  id            String   @id @default(uuid())
+  id            String   @default(uuid())
   assetA        String   @map("asset_a")
   assetB        String   @map("asset_b")
   pairKey       String   @map("pair_key")
@@ -19,15 +19,16 @@ model PricePoint {
   counterVolume Decimal  @map("counter_volume") @db.Decimal(36, 7)
   ledger        Int
   timestamp     DateTime
-  eventId       String?  @unique @map("event_id")
+  eventId       String?  @map("event_id")
 
+  @@id([id, timestamp])
   @@index([pairKey, timestamp(sort: Desc)])
   @@index([pairKey, source, timestamp(sort: Desc)])
   @@map("price_points")
 }
 
 model PoolSnapshot {
-  id          String   @id @default(uuid())
+  id          String   @default(uuid())
   poolId      String   @map("pool_id")
   assetA      String   @map("asset_a")
   assetB      String   @map("asset_b")
@@ -39,6 +40,7 @@ model PoolSnapshot {
   ledger      Int
   timestamp   DateTime
 
+  @@id([id, timestamp])
   @@index([poolId, timestamp(sort: Desc)])
   @@map("pool_snapshots")
 }
