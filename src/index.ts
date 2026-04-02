@@ -7,6 +7,7 @@ import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
 import { registerGraphQL } from './api/graphql'
+import { registerX402 } from './middleware/x402'
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
@@ -24,6 +25,7 @@ async function main() {
   await app.register(cors, { origin: true })
   await app.register(compress)
 
+  await app.register(registerX402)
   await registerRESTRoutes(app)
   await registerGraphQL(app)
 
