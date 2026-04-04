@@ -1,6 +1,8 @@
+CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+
 -- Raw price points from SDEX trades and AMM swaps
 CREATE TABLE IF NOT EXISTS price_points (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  id UUID DEFAULT gen_random_uuid(),
   asset_a TEXT NOT NULL,
   asset_b TEXT NOT NULL,
   pair_key TEXT NOT NULL,
@@ -11,8 +13,13 @@ CREATE TABLE IF NOT EXISTS price_points (
   counter_volume NUMERIC(36, 7) NOT NULL,
   ledger INTEGER NOT NULL,
   timestamp TIMESTAMPTZ NOT NULL,
-  event_id TEXT
+  event_id TEXT,
+  PRIMARY KEY (id, timestamp)
 );
+-- TimescaleDB requires all unique indexes to include the partition column (timestamp).
+-- event_id uniqueness is enforced at the application layer instead.
+
+SELECT create_hypertable('price_points', 'timestamp', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_price_points_pair_time ON price_points (pair_key, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_price_points_pair_source_time ON price_points (pair_key, source, timestamp DESC);
@@ -20,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_price_points_pool_time ON price_points (pool_id, 
 
 -- AMM pool reserve snapshots
 CREATE TABLE IF NOT EXISTS pool_snapshots (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  id UUID DEFAULT gen_random_uuid(),
   pool_id TEXT NOT NULL,
   asset_a TEXT NOT NULL,
   asset_b TEXT NOT NULL,
@@ -30,8 +37,11 @@ CREATE TABLE IF NOT EXISTS pool_snapshots (
   total_shares NUMERIC(36, 7),
   fee_bp INTEGER DEFAULT 30,
   ledger INTEGER NOT NULL,
-  timestamp TIMESTAMPTZ NOT NULL
+  timestamp TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (id, timestamp)
 );
+
+SELECT create_hypertable('pool_snapshots', 'timestamp', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_pool_snapshots_pool_time ON pool_snapshots (pool_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_pool_snapshots_assets_time ON pool_snapshots (asset_a, asset_b, timestamp DESC);
