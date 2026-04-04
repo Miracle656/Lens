@@ -33,11 +33,15 @@ async function main() {
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)
   console.log(`[lens] GraphiQL at http://localhost:${config.api.port}/graphiql`)
 
-  // ── Aggregate refresh worker ──────────────────────────────────────────────
-  const queue = createAggregateQueue()
-  startAggregateWorker()
-  await scheduleAggregateRefresh(queue)
-  console.log('[lens] Aggregate refresh worker started')
+  // ── Aggregate refresh worker (non-blocking — requires Redis) ─────────────
+  try {
+    const queue = createAggregateQueue()
+    startAggregateWorker()
+    await scheduleAggregateRefresh(queue)
+    console.log('[lens] Aggregate refresh worker started')
+  } catch (err) {
+    console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
+  }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
   console.log('[lens] Starting ingesters...')

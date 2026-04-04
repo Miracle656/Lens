@@ -7,10 +7,14 @@ import { getBestRoute } from '../aggregator/bestRoute'
 
 const QUEUE_NAME = 'aggregate-refresh'
 
+function redisConnection() {
+  const url = process.env.REDIS_URL
+  if (url) return { url }
+  return { host: 'localhost', port: 6379 }
+}
+
 export function createAggregateQueue() {
-  return new Queue(QUEUE_NAME, {
-    connection: { host: 'localhost', port: 6379 },
-  })
+  return new Queue(QUEUE_NAME, { connection: redisConnection() })
 }
 
 export function startAggregateWorker() {
@@ -77,7 +81,7 @@ export function startAggregateWorker() {
         console.error(`[aggregator] Failed for ${pairKey}:`, (err as Error).message)
       }
     },
-    { connection: { host: 'localhost', port: 6379 }, concurrency: 5 }
+    { connection: redisConnection(), concurrency: 5 }
   )
 
   worker.on('failed', (job, err) => {
