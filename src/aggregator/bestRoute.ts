@@ -12,14 +12,15 @@ function assetIdToStellar(asset: AssetId) {
 }
 
 async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
-  // Get latest pool snapshot for this pair
+  // Get latest pool snapshot via pool_id (pairKey indexes price_points correctly)
   const result = await pgPool.query(
-    `SELECT reserve_a, reserve_b, fee_bp
-     FROM pool_snapshots
-     WHERE asset_a || ':' || COALESCE(asset_b, 'native') = ANY(
-       SELECT unnest(string_to_array($1, '/'))
+    `SELECT DISTINCT ON (ps.pool_id) ps.reserve_a, ps.reserve_b, ps.fee_bp
+     FROM pool_snapshots ps
+     WHERE ps.pool_id IN (
+       SELECT DISTINCT pool_id FROM price_points
+       WHERE pair_key = $1 AND source = 'AMM' AND pool_id IS NOT NULL
      )
-     ORDER BY timestamp DESC
+     ORDER BY ps.pool_id, ps.timestamp DESC
      LIMIT 1`,
     [pairKey]
   )
