@@ -45,14 +45,14 @@ async function main() {
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
   console.log('[lens] Starting ingesters...')
-  startSDEXIngester().catch(err => {
-    console.error('[lens] SDEX ingester crashed:', err)
-    process.exit(1)
-  })
-  startAMMIngester().catch(err => {
-    console.error('[lens] AMM ingester crashed:', err)
-    process.exit(1)
-  })
+  const restartIngester = (name: string, fn: () => Promise<void>) => {
+    fn().catch(err => {
+      console.error(`[lens] ${name} ingester crashed, restarting in 10s:`, err.message)
+      setTimeout(() => restartIngester(name, fn), 10_000)
+    })
+  }
+  restartIngester('SDEX', startSDEXIngester)
+  restartIngester('AMM', startAMMIngester)
 
   console.log(`[lens] Watching ${config.pairs.length} pairs: ${config.pairs.map(p => p.pairKey).join(', ')}`)
 }
