@@ -10,7 +10,12 @@ export const prisma = globalForPrisma.prisma ?? new PrismaClient({
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
 
 // Raw pg pool for time-series queries (VWAP, aggregates)
-export const pgPool = new Pool({ connectionString: config.db.url })
+// ssl: true with rejectUnauthorized: false is required for Supabase pgbouncer
+// (their pooler uses a self-signed cert in the chain — this is safe for Supabase specifically)
+export const pgPool = new Pool({
+  connectionString: config.db.url,
+  ssl: config.db.url.includes('supabase.com') ? { rejectUnauthorized: false } : undefined,
+})
 
 export async function upsertPricePoints(points: {
   assetA: string; assetB: string; pairKey: string; source: string
