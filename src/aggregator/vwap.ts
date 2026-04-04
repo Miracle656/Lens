@@ -33,10 +33,14 @@ export async function calculateOHLCV(
 }> {
   const result = await pgPool.query(
     `SELECT
-       FIRST(price::numeric, timestamp) AS open,
+       (SELECT price::numeric FROM price_points
+        WHERE pair_key = $1 AND timestamp > NOW() - ($2 || ' minutes')::interval
+        ORDER BY timestamp ASC LIMIT 1) AS open,
        MAX(price::numeric) AS high,
        MIN(price::numeric) AS low,
-       LAST(price::numeric, timestamp) AS close,
+       (SELECT price::numeric FROM price_points
+        WHERE pair_key = $1 AND timestamp > NOW() - ($2 || ' minutes')::interval
+        ORDER BY timestamp DESC LIMIT 1) AS close,
        SUM(base_volume::numeric) AS volume,
        COUNT(*) AS trade_count
      FROM price_points
@@ -58,11 +62,12 @@ export async function calculateOHLCV(
 export async function getPriceChange24h(pairKey: string): Promise<number> {
   const result = await pgPool.query(
     `SELECT
-       FIRST(price::numeric, timestamp) AS price_24h_ago,
-       LAST(price::numeric, timestamp) AS price_now
-     FROM price_points
-     WHERE pair_key = $1
-       AND timestamp > NOW() - INTERVAL '24 hours'`,
+       (SELECT price::numeric FROM price_points
+        WHERE pair_key = $1 AND timestamp > NOW() - INTERVAL '24 hours'
+        ORDER BY timestamp ASC LIMIT 1) AS price_24h_ago,
+       (SELECT price::numeric FROM price_points
+        WHERE pair_key = $1 AND timestamp > NOW() - INTERVAL '24 hours'
+        ORDER BY timestamp DESC LIMIT 1) AS price_now`,
     [pairKey]
   )
   const row = result.rows[0]
