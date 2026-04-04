@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import fp from 'fastify-plugin'
+// @ts-ignore — @x402 packages ship ESM-only types incompatible with commonjs moduleResolution
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
+// @ts-ignore
 import { ExactStellarScheme } from '@x402/stellar/exact/server'
 
 const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
@@ -74,7 +76,7 @@ async function x402Plugin(app: FastifyInstance) {
       }
       // Valid — settle asynchronously and let the request through
       resourceServer.settle(payload, requirements).catch((err: unknown) => {
-        app.log.error('[oracle] x402 settle error:', err)
+        app.log.error({ err }, '[oracle] x402 settle error')
       })
     } catch (err) {
       reply.status(402).send({ error: 'Payment verification failed', reason: (err as Error).message })
