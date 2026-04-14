@@ -26,8 +26,8 @@ async function x402Plugin(app: FastifyInstance) {
   }
 
   const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL })
-  const resourceServer = new x402ResourceServer(facilitatorClient)
-    .register(NETWORK, new ExactStellarScheme())
+  const resourceServer: any = new x402ResourceServer(facilitatorClient)
+    .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
 
   await resourceServer.initialize()
   app.log.info('[oracle] x402 payment gating enabled')
