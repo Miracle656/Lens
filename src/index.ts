@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { execSync } from 'child_process'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
@@ -13,6 +14,11 @@ import { startAMMIngester } from './ingesters/amm'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
 
 async function main() {
+  // ── Ensure DB schema is up-to-date ────────────────────────────────────────
+  console.log('[lens] Running database migrations…')
+  execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' })
+  console.log('[lens] Database ready.')
+
   // ── Connect dependencies ──────────────────────────────────────────────────
   await redis.connect()
   console.log('[lens] Redis connected')
