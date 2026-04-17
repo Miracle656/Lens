@@ -16,7 +16,7 @@ import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } 
 async function main() {
   // ── Ensure DB schema is up-to-date ────────────────────────────────────────
   console.log('[lens] Running database migrations…')
-  execSync('npx prisma db push --accept-data-loss', { stdio: 'inherit' })
+  execSync('node node_modules/prisma/build/index.js db push --accept-data-loss', { stdio: 'inherit' })
   console.log('[lens] Database ready.')
 
   // ── Connect dependencies ──────────────────────────────────────────────────
