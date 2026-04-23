@@ -76,3 +76,17 @@ model IndexerState {
 
   @@map("indexer_state")
 }
+
+model Webhook {
+  id        String   @id @default(uuid())
+  url       String
+  assetA    String   @map("asset_a")
+  assetB    String   @map("asset_b")
+  threshold Float
+  direction String
+  secret    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([assetA, assetB])
+  @@map("webhooks")
+}

@@ -1,9 +1,13 @@
 import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { config } from '../config'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
+import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
 
 const horizonServer = new Horizon.Server(config.horizon.url)
+
+// Last seen price per pairKey — used for threshold crossing detection
+const lastPrice = new Map<string, number>()
 
 function toAsset(asset: { code: string; issuer: string | null }): Asset {
   if (!asset.issuer || asset.code === 'XLM') return Asset.native()
@@ -51,10 +55,22 @@ async function ingestPair(pair: WatchedPair): Promise<void> {
     })
 
     if (points.length > 0) {
+      const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
+      const currentPrice = points[points.length - 1].price
+
       await upsertPricePoints(points)
+      lastPrice.set(pair.pairKey, currentPrice)
+
       const lastCursor = trades.records[trades.records.length - 1].paging_token
       await setIndexerCursor(stateId, lastCursor)
       console.log(`[sdex] ${pair.pairKey}: ingested ${points.length} trades`)
+
+      dispatchPriceUpdate({
+        assetA: pair.assetA.code,
+        assetB: pair.assetB.code,
+        previousPrice,
+        currentPrice,
+      }).catch(err => console.error('[sdex] webhook dispatch error:', err.message))
     }
   } catch (err) {
     console.error(`[sdex] Error ingesting ${pair.pairKey}:`, (err as Error).message)

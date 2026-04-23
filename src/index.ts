@@ -8,6 +8,7 @@ import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
 import { registerGraphQL } from './api/graphql'
+import { registerWebhookRoutes } from './routes/webhooks'
 import { registerX402 } from './middleware/x402'
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
@@ -33,6 +34,7 @@ async function main() {
 
   await app.register(registerX402)
   await registerRESTRoutes(app)
+  await registerWebhookRoutes(app)
   await registerGraphQL(app)
 
   await app.listen({ port: config.api.port, host: config.api.host })
