@@ -5,14 +5,11 @@ import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
 // @ts-ignore
 import { ExactStellarScheme } from '@x402/stellar/exact/server'
 
-const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
-const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
-const NETWORK = (process.env.STELLAR_NETWORK === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet') as string
-
 // Routes gated by x402 and their prices
 const GATED_ROUTES: Record<string, { price: string; description: string }> = {
   '/price': { price: '$0.10', description: 'Unified SDEX+AMM price with VWAP and best route' },
   '/pools': { price: '$0.05', description: 'AMM liquidity pool reserves and spot prices' },
+  '/candles': { price: '$0.05', description: 'OHLCV candle data for trading charts' },
 }
 
 /**
@@ -20,6 +17,11 @@ const GATED_ROUTES: Record<string, { price: string; description: string }> = {
  * Only active when ORACLE_PAYMENT_ADDRESS is set in env.
  */
 async function x402Plugin(app: FastifyInstance) {
+  // Read at plugin init time (not module load) so tests can inject env vars before app.register()
+  const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
+  const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
+  const NETWORK = (process.env.STELLAR_NETWORK === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet') as string
+
   if (!PAYMENT_ADDRESS) {
     app.log.warn('[oracle] ORACLE_PAYMENT_ADDRESS not set — x402 gating disabled')
     return
@@ -46,7 +48,7 @@ async function x402Plugin(app: FastifyInstance) {
       scheme: 'exact' as const,
       price,
       network: NETWORK,
-      payTo: PAYMENT_ADDRESS!,
+      payTo: PAYMENT_ADDRESS,
     }
 
     // No payment header — return 402 with requirements
