@@ -1,9 +1,12 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { config } from '../config'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
+import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
 
 const horizonServer = new Horizon.Server(config.horizon.url)
+
+const lastPrice = new Map<string, number>()
 
 async function fetchPools(pair: WatchedPair): Promise<any[]> {
   try {
@@ -75,6 +78,15 @@ async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
         timestamp: new Date(),
         eventId: `amm-snapshot-${pool.id}-${Date.now()}`,
       }])
+
+      const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
+      lastPrice.set(pair.pairKey, spotPrice)
+      dispatchPriceUpdate({
+        assetA: pair.assetA.code,
+        assetB: pair.assetB.code,
+        previousPrice,
+        currentPrice: spotPrice,
+      }).catch(err => console.error('[amm] webhook dispatch error:', err.message))
     }
   } catch (err) {
     console.error(`[amm] Snapshot error for pool ${pool.id}:`, (err as Error).message)
@@ -116,10 +128,22 @@ async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<void> {
       }
     })
 
+    const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
+    const currentPrice = points[points.length - 1].price
+
     await upsertPricePoints(points)
+    lastPrice.set(pair.pairKey, currentPrice)
+
     const lastCursor = records[records.length - 1].paging_token
     await setIndexerCursor(stateId, lastCursor)
     console.log(`[amm] Pool ${pool.id.slice(0, 8)}: ingested ${points.length} trades`)
+
+    dispatchPriceUpdate({
+      assetA: pair.assetA.code,
+      assetB: pair.assetB.code,
+      previousPrice,
+      currentPrice,
+    }).catch(err => console.error('[amm] webhook dispatch error:', err.message))
   } catch (err) {
     console.error(`[amm] Trade ingest error for pool ${pool.id}:`, (err as Error).message)
   }
