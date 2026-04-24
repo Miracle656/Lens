@@ -1,5 +1,6 @@
 import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { config } from '../config'
+import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
@@ -82,10 +83,10 @@ async function sleep(ms: number) {
 }
 
 export async function startSDEXIngester(): Promise<void> {
-  console.log(`[sdex] Starting SDEX ingester for ${config.pairs.length} pairs`)
+  console.log(`[sdex] Starting SDEX ingester for ${getActivePairs().length} pairs`)
 
   while (true) {
-    await Promise.all(config.pairs.map(pair => ingestPair(pair)))
+    await Promise.all(getActivePairs().map(pair => ingestPair(pair)))
     await sleep(config.indexer.pollIntervalMs)
   }
 }

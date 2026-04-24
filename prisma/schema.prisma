@@ -77,6 +77,17 @@ model IndexerState {
   @@map("indexer_state")
 }
 
+model PairConfig {
+  pairKey   String   @id @map("pair_key")
+  assetACode   String   @map("asset_a_code")
+  assetAIssuer String?  @map("asset_a_issuer")
+  assetBCode   String   @map("asset_b_code")
+  assetBIssuer String?  @map("asset_b_issuer")
+  addedAt   DateTime @default(now()) @map("added_at")
+
+  @@map("pair_configs")
+}
+
 model Webhook {
   id        String   @id @default(uuid())
   url       String
