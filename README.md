@@ -44,6 +44,9 @@ query {
 }
 ```
 
+## Documentation
+Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
+
 ## Quick Start
 
 ```bash
