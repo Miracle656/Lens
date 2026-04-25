@@ -1,15 +1,40 @@
 import type { FastifyInstance } from 'fastify'
 import { getActivePairs, parseAssetStr, makePairKey, registerPair, persistPair, hasPair } from '../pairsRegistry'
+import { pgPool } from '../db'
 
 export async function registerPairsRoutes(app: FastifyInstance) {
-  // GET /pairs — list all active pairs (already exists in rest.ts but this is the authoritative source)
-  app.get('/pairs', async () => ({
-    pairs: getActivePairs().map(p => ({
-      pairKey: p.pairKey,
-      assetA: p.assetA,
-      assetB: p.assetB,
-    })),
-  }))
+  // GET /pairs — list all active pairs with latest price metadata
+  app.get('/pairs', async () => {
+    const activePairs = getActivePairs()
+    
+    // Fetch latest price for all pairs in one go
+    const result = await pgPool.query(`
+      SELECT DISTINCT ON (pair_key) pair_key, price, timestamp
+      FROM price_points
+      ORDER BY pair_key, timestamp DESC
+    `)
+    
+    const latestPrices = new Map<string, { price: number; timestamp: Date }>()
+    result.rows.forEach(row => {
+      latestPrices.set(row.pair_key, {
+        price: parseFloat(row.price),
+        timestamp: row.timestamp,
+      })
+    })
+
+    return {
+      pairs: activePairs.map(p => {
+        const latest = latestPrices.get(p.pairKey)
+        return {
+          pairKey: p.pairKey,
+          assetA: p.assetA,
+          assetB: p.assetB,
+          latestPrice: latest?.price ?? null,
+          lastUpdated: latest?.timestamp ?? null,
+        }
+      })
+    }
+  })
 
   // POST /pairs — add a new trading pair at runtime
   app.post<{
