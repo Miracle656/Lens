@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import { Pool } from 'pg'
+import { db_query_duration_seconds } from './metrics'
 import { config } from './config'
 
 // Prisma for schema management + simple queries
@@ -16,6 +17,17 @@ export const pgPool = new Pool({
   connectionString: config.db.url,
   ssl: config.db.url.includes('supabase.com') ? { rejectUnauthorized: false } : undefined,
 })
+
+// Instrument raw pg queries
+const originalQuery = pgPool.query.bind(pgPool)
+pgPool.query = (async (...args: any[]) => {
+  const end = db_query_duration_seconds.startTimer()
+  try {
+    return await originalQuery(...args)
+  } finally {
+    end()
+  }
+}) as any
 
 export async function upsertPricePoints(points: {
   assetA: string; assetB: string; pairKey: string; source: string

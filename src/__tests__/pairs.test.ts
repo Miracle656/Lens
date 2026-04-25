@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 
 // vi.mock factories are hoisted — declare all mock fns with vi.hoisted()
-const { mockHasPair, mockRegisterPair, mockPersistPair, mockGetActivePairs } = vi.hoisted(() => ({
+const { mockHasPair, mockRegisterPair, mockPersistPair, mockGetActivePairs, mockPgQuery } = vi.hoisted(() => ({
   mockHasPair: vi.fn(),
   mockRegisterPair: vi.fn(),
   mockPersistPair: vi.fn(),
   mockGetActivePairs: vi.fn(),
+  mockPgQuery: vi.fn(),
 }))
 
 vi.mock('../pairsRegistry', () => ({
@@ -27,6 +28,13 @@ vi.mock('../pairsRegistry', () => ({
     const bStr = b.issuer ? `${b.code}:${b.issuer}` : b.code
     return [aStr, bStr].sort().join('/')
   },
+}))
+
+vi.mock('../db', () => ({
+  pgPool: {
+    query: mockPgQuery,
+  },
+  prisma: {},
 }))
 
 import { registerPairsRoutes } from '../routes/pairs'
@@ -52,6 +60,7 @@ beforeEach(() => {
   mockRegisterPair.mockReset().mockReturnValue(true)
   mockPersistPair.mockReset().mockResolvedValue(undefined)
   mockGetActivePairs.mockReset().mockReturnValue([])
+  mockPgQuery.mockReset().mockResolvedValue({ rows: [] })
 })
 
 describe('POST /pairs', () => {
