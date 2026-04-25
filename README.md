@@ -47,7 +47,19 @@ query {
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
 
-## Quick Start
+## Docker Quickstart
+The fastest way to get Lens running locally is with Docker:
+
+```bash
+# Start Lens, Postgres, and Redis
+docker compose up -d
+
+# Check health
+docker compose ps
+```
+The API will be available at `http://localhost:3002`. Database migrations run automatically on startup.
+
+## Quick Start (Manual)
 
 ```bash
 # 1. Start PostgreSQL + Redis
