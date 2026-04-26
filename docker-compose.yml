@@ -1,17 +1,41 @@
 version: "3.9"
 
 services:
+  lens:
+    build: .
+    ports:
+      - "3002:3002"
+    environment:
+      - DATABASE_URL=postgresql://lens:lens@postgres:5432/lens
+      - REDIS_URL=redis://redis:6379
+      - WATCHED_PAIRS=XLM:native/USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: lens
-      POSTGRES_PASSWORD: lens
-      POSTGRES_DB: lens
+      - POSTGRES_USER=lens
+      - POSTGRES_PASSWORD=lens
+      - POSTGRES_DB=lens
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lens -d lens"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine

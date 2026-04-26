@@ -1,4 +1,4 @@
-import { Horizon } from '@stellar/stellar-sdk'
+import { Horizon, Asset } from '@stellar/stellar-sdk'
 import { config } from '../config'
 import type { AssetId, RouteInfo } from '../types'
 import { pgPool } from '../db'
@@ -6,7 +6,6 @@ import { pgPool } from '../db'
 const horizonServer = new Horizon.Server(config.horizon.url)
 
 function assetIdToStellar(asset: AssetId) {
-  const { Asset } = require('@stellar/stellar-sdk')
   if (!asset.issuer) return Asset.native()
   return new Asset(asset.code, asset.issuer)
 }
@@ -47,7 +46,7 @@ async function getSDEXPrice(assetA: AssetId, assetB: AssetId, amount: number): P
     if (paths.records.length === 0) return 0
     const best = paths.records[0]
     return parseFloat(best.destination_amount) / amount
-  } catch {
+  } catch (err) {
     return 0
   }
 }
@@ -68,7 +67,7 @@ export async function getBestRoute(
   let recommendation = 'Insufficient liquidity data'
 
   if (sdexPrice === 0 && ammPrice === 0) {
-    route = 'UNKNOWN'
+    throw new Error("No pricing data available")
   } else if (sdexPrice === 0) {
     route = 'AMM'
     estimatedOutput = ammPrice * amount

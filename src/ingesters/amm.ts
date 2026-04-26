@@ -1,5 +1,6 @@
 import { Horizon } from '@stellar/stellar-sdk'
 import { config } from '../config'
+import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
@@ -154,10 +155,10 @@ async function sleep(ms: number) {
 }
 
 export async function startAMMIngester(): Promise<void> {
-  console.log(`[amm] Starting AMM ingester for ${config.pairs.length} pairs`)
+  console.log(`[amm] Starting AMM ingester for ${getActivePairs().length} pairs`)
 
   while (true) {
-    for (const pair of config.pairs) {
+    for (const pair of getActivePairs()) {
       const pools = await fetchPools(pair)
       console.log(`[amm] ${pair.pairKey}: found ${pools.length} AMM pools`)
 

@@ -33,14 +33,6 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     }
   })
 
-  // GET /pairs
-  app.get('/pairs', async () => ({
-    pairs: config.pairs.map(p => ({
-      pairKey: p.pairKey,
-      assetA: p.assetA,
-      assetB: p.assetB,
-    })),
-  }))
 
   // GET /price/:assetA/:assetB
   app.get<{ Params: { assetA: string; assetB: string } }>(
