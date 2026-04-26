@@ -14,7 +14,7 @@ function toAsset(asset: { code: string; issuer: string | null }): Asset {
   return new Asset(asset.code, asset.issuer)
 }
 
-async function ingestPair(pair: WatchedPair): Promise<void> {
+export async function ingestPair(pair: WatchedPair): Promise<void> {
   const stateId = `sdex:${pair.pairKey}`
   const cursor = await getIndexerCursor(stateId) ?? '0'
 
