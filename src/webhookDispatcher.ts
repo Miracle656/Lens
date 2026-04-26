@@ -1,5 +1,7 @@
 import { createHmac } from 'crypto'
 import { prisma } from './db'
+import { priceEmitter, PRICE_UPDATE } from './events'
+
 
 export interface PriceUpdate {
   assetA: string
@@ -71,7 +73,15 @@ export async function dispatchPriceUpdate(update: PriceUpdate): Promise<void> {
     },
   })
 
-  if (webhooks.length === 0) return
+  if (webhooks.length === 0) {
+    // Still emit for internal listeners (like WebSocket) even if no webhooks are registered
+    priceEmitter.emit(PRICE_UPDATE, { ...update, timestamp: new Date() })
+    return
+  }
+
+  // Emit before webhook delivery
+  priceEmitter.emit(PRICE_UPDATE, { ...update, timestamp: new Date() })
+
 
   const triggered = webhooks.filter(wh => {
     if (wh.direction === 'above') {
