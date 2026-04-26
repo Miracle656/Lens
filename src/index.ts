@@ -3,6 +3,7 @@ import { execSync } from 'child_process'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
+import { getMetrics } from './metrics'
 import { config } from './config'
 import { redis } from './redis'
 import { pgPool } from './db'
@@ -44,6 +45,12 @@ async function main() {
   await registerCandleRoutes(app)
   await registerPairsRoutes(app)
   await registerGraphQL(app)
+
+  // Prometheus metrics endpoint (un-gated)
+  app.get('/metrics', async (req, reply) => {
+    reply.type('text/plain; version=0.0.4; charset=utf-8')
+    return await getMetrics()
+  })
 
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)

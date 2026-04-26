@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { price_requests_total } from '../metrics'
 import mercurius from 'mercurius'
 import { getCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
@@ -75,6 +76,7 @@ function findPair(assetA: string, assetB: string) {
 const resolvers = {
   Query: {
     async getPrice(_: unknown, { assetA, assetB }: { assetA: string; assetB: string }) {
+      price_requests_total.inc()
       const pair = findPair(assetA, assetB)
       if (!pair) return null
       const pairKey = pair.pairKey

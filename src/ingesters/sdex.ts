@@ -1,4 +1,5 @@
 import { Horizon, Asset } from '@stellar/stellar-sdk'
+import { trades_ingested_total, last_trade_timestamp } from '../metrics'
 import { config } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
@@ -61,6 +62,10 @@ async function ingestPair(pair: WatchedPair): Promise<void> {
 
       await upsertPricePoints(points)
       lastPrice.set(pair.pairKey, currentPrice)
+
+      // Metrics instrumentation
+      trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
+      last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
       const lastCursor = trades.records[trades.records.length - 1].paging_token
       await setIndexerCursor(stateId, lastCursor)

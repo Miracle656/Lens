@@ -34,6 +34,13 @@ vi.mock('../pairsRegistry', () => ({
   },
 }))
 
+vi.mock('../db', () => ({
+  pgPool: {
+    query: mockPgQuery,
+  },
+  prisma: {},
+}))
+
 import { registerPairsRoutes } from '../routes/pairs'
 
 const ADMIN_KEY = 'test-admin-key-abc'

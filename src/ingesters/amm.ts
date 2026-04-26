@@ -1,4 +1,5 @@
 import { Horizon } from '@stellar/stellar-sdk'
+import { amm_snapshots_total, trades_ingested_total, last_trade_timestamp } from '../metrics'
 import { config } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
@@ -63,6 +64,8 @@ async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
         timestamp: new Date(),
       },
     })
+
+    amm_snapshots_total.inc({ pool: pool.id })
 
     // Also record spot price as a price point (no volume — it's a snapshot, not a trade)
     if (spotPrice > 0) {
@@ -134,6 +137,10 @@ async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<void> {
 
     await upsertPricePoints(points)
     lastPrice.set(pair.pairKey, currentPrice)
+
+    // Metrics instrumentation
+    trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
+    last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
     const lastCursor = records[records.length - 1].paging_token
     await setIndexerCursor(stateId, lastCursor)
