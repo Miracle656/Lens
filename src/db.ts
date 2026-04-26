@@ -23,7 +23,7 @@ const originalQuery = pgPool.query.bind(pgPool)
 pgPool.query = (async (...args: any[]) => {
   const end = db_query_duration_seconds.startTimer()
   try {
-    return await originalQuery(...args)
+    return await (originalQuery as any)(...args)
   } finally {
     end()
   }
