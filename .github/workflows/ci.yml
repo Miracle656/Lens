@@ -17,6 +17,7 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci || npm install
+      - run: node node_modules/prisma/build/index.js generate
       - run: npx tsc --noEmit
       - run: npm run build
       - run: npm test --if-present

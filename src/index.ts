@@ -8,10 +8,16 @@ import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
 import { registerGraphQL } from './api/graphql'
+import { registerWebhookRoutes } from './routes/webhooks'
+import { registerCandleRoutes } from './routes/candles'
+import { registerPairsRoutes } from './routes/pairs'
 import { registerX402 } from './middleware/x402'
+import { registerWebSocket } from './api/websocket'
+
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
+import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 
 async function main() {
   // ── Ensure DB schema is up-to-date ────────────────────────────────────────
@@ -26,6 +32,9 @@ async function main() {
   await pgPool.connect()
   console.log('[lens] PostgreSQL connected')
 
+  // ── Load persisted runtime pairs ──────────────────────────────────────────
+  await loadPersistedPairs()
+
   // ── Fastify API server ────────────────────────────────────────────────────
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
@@ -33,7 +42,12 @@ async function main() {
 
   await app.register(registerX402)
   await registerRESTRoutes(app)
+  await registerWebhookRoutes(app)
+  await registerCandleRoutes(app)
+  await registerPairsRoutes(app)
   await registerGraphQL(app)
+  await registerWebSocket(app)
+
 
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)
@@ -60,7 +74,7 @@ async function main() {
   restartIngester('SDEX', startSDEXIngester)
   restartIngester('AMM', startAMMIngester)
 
-  console.log(`[lens] Watching ${config.pairs.length} pairs: ${config.pairs.map(p => p.pairKey).join(', ')}`)
+  console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
 
 main().catch(err => {

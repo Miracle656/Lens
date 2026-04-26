@@ -44,7 +44,22 @@ query {
 }
 ```
 
-## Quick Start
+## Documentation
+Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
+
+## Docker Quickstart
+The fastest way to get Lens running locally is with Docker:
+
+```bash
+# Start Lens, Postgres, and Redis
+docker compose up -d
+
+# Check health
+docker compose ps
+```
+The API will be available at `http://localhost:3002`. Database migrations run automatically on startup.
+
+## Quick Start (Manual)
 
 ```bash
 # 1. Start PostgreSQL + Redis
@@ -62,6 +77,30 @@ npm run db:push
 # 5. Start dev server
 npm run dev
 ```
+
+## Environment Variables
+
+| Variable | Description | Default | Required |
+|---|---|---|---|
+| `NODE_ENV` | Environment mode (`development`, `test`, `production`) | `development` | No |
+| `PORT` | API server port | `3002` | No |
+| `HOST` | API server host | `0.0.0.0` | No |
+| `DATABASE_URL` | PostgreSQL connection string | - | **Yes** |
+| `REDIS_URL` | Redis connection string | - | **Yes** |
+| `PRICE_CACHE_TTL` | Cache duration for price data (seconds) | `10` | No |
+| `HORIZON_URL` | Stellar Horizon server URL | - | No |
+| `RPC_URL` | Soroban RPC server URL | - | No |
+| `NETWORK_PASSPHRASE` | Stellar network passphrase | - | No |
+| `STELLAR_NETWORK` | `mainnet` or `testnet` (for x402 logic) | `testnet` | No |
+| `POLL_INTERVAL_MS` | Indexer polling frequency (ms) | `5000` | No |
+| `SDEX_PAGE_SIZE` | Trades per page for SDEX ingestion | `200` | No |
+| `AMM_PAGE_SIZE` | Trades per page for AMM ingestion | `200` | No |
+| `ADMIN_API_KEY` | Key for admin route authentication | - | No |
+| `WATCHED_PAIRS` | Comma-separated list of asset pairs to index | - | **Yes** |
+| `ORACLE_PAYMENT_ADDRESS` | Stellar address for x402 API payments | - | No* |
+| `X402_FACILITATOR_URL` | x402 facilitator service URL | - | No |
+
+*\*Required if enabling x402 payment gating.*
 
 ## Stack
 - **Runtime:** Node.js 20 + TypeScript
