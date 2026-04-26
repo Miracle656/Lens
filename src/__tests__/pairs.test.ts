@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 
 // vi.mock factories are hoisted — declare all mock fns with vi.hoisted()
-const { mockHasPair, mockRegisterPair, mockPersistPair, mockGetActivePairs, mockPgQuery } = vi.hoisted(() => ({
+const { mockHasPair, mockRegisterPair, mockPersistPair, mockGetActivePairs, mockQuery } = vi.hoisted(() => ({
   mockHasPair: vi.fn(),
   mockRegisterPair: vi.fn(),
   mockPersistPair: vi.fn(),
   mockGetActivePairs: vi.fn(),
-  mockPgQuery: vi.fn(),
+  mockQuery: vi.fn(),
+}))
+
+vi.mock('../db', () => ({
+  pgPool: { query: mockQuery },
 }))
 
 vi.mock('../pairsRegistry', () => ({
@@ -60,7 +64,7 @@ beforeEach(() => {
   mockRegisterPair.mockReset().mockReturnValue(true)
   mockPersistPair.mockReset().mockResolvedValue(undefined)
   mockGetActivePairs.mockReset().mockReturnValue([])
-  mockPgQuery.mockReset().mockResolvedValue({ rows: [] })
+  mockQuery.mockReset().mockResolvedValue({ rows: [] })
 })
 
 describe('POST /pairs', () => {
