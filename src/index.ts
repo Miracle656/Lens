@@ -13,6 +13,8 @@ import { registerWebhookRoutes } from './routes/webhooks'
 import { registerCandleRoutes } from './routes/candles'
 import { registerPairsRoutes } from './routes/pairs'
 import { registerX402 } from './middleware/x402'
+import { registerWebSocket } from './api/websocket'
+
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
@@ -69,6 +71,8 @@ async function main() {
   await registerCandleRoutes(app)
   await registerPairsRoutes(app)
   await registerGraphQL(app)
+  await registerWebSocket(app)
+
 
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)

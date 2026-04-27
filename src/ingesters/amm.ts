@@ -9,7 +9,7 @@ const horizonServer = new Horizon.Server(config.horizon.url)
 
 const lastPrice = new Map<string, number>()
 
-async function fetchPools(pair: WatchedPair): Promise<any[]> {
+export async function fetchPools(pair: WatchedPair): Promise<any[]> {
   try {
     // Use Horizon's reserves filter to find pools for this specific pair
     const assetAStr = pair.assetA.issuer
@@ -36,7 +36,7 @@ async function fetchPools(pair: WatchedPair): Promise<any[]> {
   }
 }
 
-async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
+export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
   try {
     const r0 = pool.reserves[0]
     const r1 = pool.reserves[1]
@@ -94,7 +94,7 @@ async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
   }
 }
 
-async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<void> {
+export async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<void> {
   const stateId = `amm:${pool.id}`
   const cursor = await getIndexerCursor(stateId) ?? '0'
 
