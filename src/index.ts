@@ -3,7 +3,7 @@ import { execSync } from 'child_process'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
-import { getMetrics } from './metrics'
+import rateLimit from '@fastify/rate-limit'
 import { config } from './config'
 import { redis } from './redis'
 import { pgPool } from './db'
@@ -13,8 +13,11 @@ import { registerWebhookRoutes } from './routes/webhooks'
 import { registerCandleRoutes } from './routes/candles'
 import { registerPairsRoutes } from './routes/pairs'
 import { registerX402 } from './middleware/x402'
+import { registerWebSocket } from './api/websocket'
+
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
+import { startSoroswapIngester } from './ingesters/soroswap'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 
@@ -38,6 +41,30 @@ async function main() {
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
   await app.register(compress)
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    allowList: (req) => req.url === '/status',
+    errorResponseBuilder: (req, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded, retry in ${context.after}`,
+      retryAfter: context.after
+    })
+  })
+
+  // Specific limit for /status (higher for monitoring)
+  app.addHook('onRoute', (routeOptions) => {
+    if (routeOptions.url === '/status') {
+      routeOptions.config = {
+        ...routeOptions.config,
+        rateLimit: {
+          max: 1000,
+          timeWindow: '1 minute'
+        }
+      }
+    }
+  })
 
   await app.register(registerX402)
   await registerRESTRoutes(app)
@@ -45,6 +72,7 @@ async function main() {
   await registerCandleRoutes(app)
   await registerPairsRoutes(app)
   await registerGraphQL(app)
+  await registerWebSocket(app)
 
   // Prometheus metrics endpoint (un-gated)
   app.get('/metrics', async (req, reply) => {
@@ -67,6 +95,8 @@ async function main() {
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
+  // Each ingester is independently fault-isolated via restartIngester.
+  // A crash in the Soroswap ingester cannot take down SDEX or AMM.
   console.log('[lens] Starting ingesters...')
   const restartIngester = (name: string, fn: () => Promise<void>) => {
     fn().catch(err => {
@@ -76,6 +106,7 @@ async function main() {
   }
   restartIngester('SDEX', startSDEXIngester)
   restartIngester('AMM', startAMMIngester)
+  restartIngester('Soroswap', startSoroswapIngester)
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
