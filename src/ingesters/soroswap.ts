@@ -101,13 +101,6 @@ export async function fetchPoolsFromFactory(
     const networkPassphrase =
       config.network.passphrase ?? Networks.PUBLIC
 
-    // Call factory.get_pools(tokenA, tokenB) — returns Vec<Address>
-    const { xdr: tokenAXdr } = (await rpc.getContractData(
-      factoryAddress,
-      factory.address().toScVal()
-    ).catch(() => ({ xdr: null }))) as { xdr: string | null }
-    void tokenAXdr // informational only; we use simulation below
-
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase,
