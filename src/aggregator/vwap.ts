@@ -82,10 +82,8 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
   volume24h: number; sdexVolume24h: number; ammVolume24h: number
   vwap1m: number; vwap5m: number; vwap1h: number; vwap24h: number
   priceChange24h: number; sources: number
-  confidence: 'high' | 'medium' | 'low' | 'unknown'
-  lastTradeAgeSeconds: number | null
 }> {
-  const [vwap1m, vwap5m, vwap1h, vwap24h, sdexVwap24h, priceChange24h, ammSpotResult, lastTradeResult] = await Promise.all([
+  const [vwap1m, vwap5m, vwap1h, vwap24h, sdexVwap24h, priceChange24h, ammSpotResult] = await Promise.all([
     calculateVWAP(pairKey, 1),
     calculateVWAP(pairKey, 5),
     calculateVWAP(pairKey, 60),
@@ -104,11 +102,6 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
          )
          ORDER BY ps.pool_id, ps.timestamp DESC
        ) latest`,
-      [pairKey]
-    ),
-    // Last trade timestamp
-    pgPool.query(
-      `SELECT MAX(timestamp) as last_trade FROM price_points WHERE pair_key = $1`,
       [pairKey]
     ),
   ])
@@ -140,28 +133,12 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
   )
 
   const ammPrice = parseFloat(ammSpotResult.rows[0]?.amm_price ?? '0')
-  const lastTrade = lastTradeResult.rows[0]?.last_trade
-  const lastTradeAgeSeconds = lastTrade ? Math.floor((Date.now() - new Date(lastTrade).getTime()) / 1000) : null
-  const sources = parseInt(sourcesResult.rows[0]?.sources ?? '0', 10)
-  const volume24h = sdexVolume24h + ammVolume24h
-
-
-  let confidence: 'high' | 'medium' | 'low' | 'unknown' = 'unknown'
-  if (lastTradeAgeSeconds === null) {
-    confidence = 'unknown'
-  } else if (lastTradeAgeSeconds < 30 && sources > 1 && volume24h > 0) {
-    confidence = 'high'
-  } else if (lastTradeAgeSeconds < 300) {
-    confidence = 'medium'
-  } else {
-    confidence = 'low'
-  }
 
   return {
     price: vwap1h || vwap24h || ammPrice || 0,
     sdexPrice: sdexVwap24h,
     ammPrice,
-    volume24h,
+    volume24h: sdexVolume24h + ammVolume24h,
     sdexVolume24h,
     ammVolume24h,
     vwap1m,
@@ -169,8 +146,6 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
     vwap1h,
     vwap24h,
     priceChange24h,
-    sources,
-    confidence,
-    lastTradeAgeSeconds,
+    sources: parseInt(sourcesResult.rows[0]?.sources ?? '1', 10),
   }
 }

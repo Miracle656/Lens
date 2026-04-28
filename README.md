@@ -46,7 +46,6 @@ query {
 
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
-The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
 
 ## Docker Quickstart
 The fastest way to get Lens running locally is with Docker:

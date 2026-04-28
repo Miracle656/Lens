@@ -31,8 +31,6 @@ export interface AggregatedPrice {
   priceChange24h: number
   lastUpdated: Date
   sources: number
-  confidence: 'high' | 'medium' | 'low' | 'unknown'
-  lastTradeAgeSeconds: number | null
 }
 
 export interface RouteInfo {

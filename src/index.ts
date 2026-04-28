@@ -3,7 +3,6 @@ import { execSync } from 'child_process'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
-import rateLimit from '@fastify/rate-limit'
 import { config } from './config'
 import { redis } from './redis'
 import { pgPool } from './db'
@@ -40,30 +39,6 @@ async function main() {
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
   await app.register(compress)
-  await app.register(rateLimit, {
-    max: 100,
-    timeWindow: '1 minute',
-    allowList: (req) => req.url === '/status', // Allow /status to have its own limit or be bypassed
-    errorResponseBuilder: (req, context) => ({
-      statusCode: 429,
-      error: 'Too Many Requests',
-      message: `Rate limit exceeded, retry in ${context.after}`,
-      retryAfter: context.after
-    })
-  })
-
-  // Specific limit for /status (higher for monitoring)
-  app.addHook('onRoute', (routeOptions) => {
-    if (routeOptions.url === '/status') {
-      routeOptions.config = {
-        ...routeOptions.config,
-        rateLimit: {
-          max: 1000,
-          timeWindow: '1 minute'
-        }
-      }
-    }
-  })
 
   await app.register(registerX402)
   await registerRESTRoutes(app)

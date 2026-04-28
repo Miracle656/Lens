@@ -25,8 +25,6 @@ const schema = `
     priceChange24h: Float!
     lastUpdated: String!
     sources: Int!
-    confidence: String!
-    lastTradeAgeSeconds: Int
   }
 
   type RouteInfo {
