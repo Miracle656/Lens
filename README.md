@@ -44,6 +44,170 @@ query {
 }
 ```
 
+## Usage Examples
+
+### Health Check (Unauthenticated)
+Get API status without authentication:
+
+```bash
+curl http://localhost:3002/status
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "uptime": 3600,
+  "indexedPairs": 15
+}
+```
+
+### REST API with x402 Payment
+
+#### Request without Payment (402 Response)
+If the API requires payment and you don't provide credentials:
+
+```bash
+curl -i http://localhost:3002/price/XLM/USDC
+```
+
+Response headers:
+```
+HTTP/1.1 402 Payment Required
+x402-price: 1000
+x402-currency: stroops
+x402-address: GACS2DRJNKIXOSGZ5GQGWGD5DKVYHQSQUHZ4RGSQ3VCBJQRN26NLQCX
+x402-memo: payment-invoice-12345
+```
+
+Response body:
+```json
+{
+  "error": "Payment Required",
+  "price": 1000,
+  "currency": "stroops"
+}
+```
+
+#### Request with x402 Payment Header
+After receiving the 402 response and making a Stellar payment, include the payment proof:
+
+```bash
+curl -H "X-PAYMENT: <payment-signature>" \
+  http://localhost:3002/price/XLM/USDC
+```
+
+Response (200 OK):
+```json
+{
+  "price": 0.15234,
+  "vwap1h": 0.15198,
+  "volume24h": 5000000,
+  "bestRoute": "SDEX",
+  "priceChange24h": 2.15
+}
+```
+
+#### Fetch Example
+Using the Fetch API in JavaScript:
+
+```javascript
+// First request: Get payment details
+const initialResponse = await fetch('http://localhost:3002/price/XLM/USDC');
+
+if (initialResponse.status === 402) {
+  const paymentRequired = await initialResponse.json();
+  console.log('Payment required:', paymentRequired);
+  // Handle payment with Stellar SDK...
+}
+
+// After making Stellar payment, retry with payment signature
+const paymentSignature = 'your-signed-payment-tx-hash';
+const paidResponse = await fetch('http://localhost:3002/price/XLM/USDC', {
+  headers: {
+    'X-PAYMENT': paymentSignature
+  }
+});
+
+const priceData = await paidResponse.json();
+console.log('Price data:', priceData);
+```
+
+### Node.js with @x402/client
+
+Install the client:
+```bash
+npm install @x402/client
+```
+
+Example with automatic payment handling:
+
+```javascript
+import { X402Client } from '@x402/client';
+import { Keypair } from '@stellar/stellar-sdk';
+
+const keypair = Keypair.fromSecret('SBVP... your stellar secret key');
+
+const client = new X402Client({
+  facilitatorUrl: process.env.X402_FACILITATOR_URL,
+  publicKey: keypair.publicKey(),
+  secretKey: keypair.secret()
+});
+
+try {
+  const response = await client.get(
+    'http://localhost:3002/price/XLM/USDC'
+  );
+
+  console.log('Current price:', response.data.price);
+  console.log('Volume 24h:', response.data.volume24h);
+  console.log('Best route:', response.data.bestRoute);
+} catch (error) {
+  console.error('Request failed:', error.message);
+}
+```
+
+The client automatically handles:
+- Detecting 402 responses
+- Creating and signing Stellar payments
+- Retrying with the payment header
+
+### GraphQL with x402 Payment
+
+Query prices and routes using GraphQL (requires payment):
+
+```bash
+curl -X POST http://localhost:3002/graphql \
+  -H "Content-Type: application/json" \
+  -H "X-PAYMENT: <payment-signature>" \
+  -d '{
+    "query": "query { getPrice(assetA: \"XLM\", assetB: \"USDC\") { price vwap1h volume24h bestRoute priceChange24h } getBestRoute(assetA: \"XLM\", assetB: \"USDC\", amount: 100) { route sdexPrice ammPrice estimatedOutput slippagePct recommendation } }"
+  }'
+```
+
+Response:
+```json
+{
+  "data": {
+    "getPrice": {
+      "price": 0.15234,
+      "vwap1h": 0.15198,
+      "volume24h": 5000000,
+      "bestRoute": "SDEX",
+      "priceChange24h": 2.15
+    },
+    "getBestRoute": {
+      "route": "SDEX",
+      "sdexPrice": 0.15234,
+      "ammPrice": 0.15198,
+      "estimatedOutput": 15.234,
+      "slippagePct": 0.024,
+      "recommendation": "SDEX offers 0.24% better pricing"
+    }
+  }
+}
+```
+
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
 The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
