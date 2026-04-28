@@ -56,5 +56,17 @@ export const config = {
   cache: {
     priceTtl: parseInt(process.env.PRICE_CACHE_TTL ?? '10', 10),
   },
+  // ── Soroswap AMM Ingester ──────────────────────────────────────────────────
+  soroswap: {
+    /** Mainnet Soroswap factory contract address */
+    factoryAddress:
+      process.env.SOROSWAP_FACTORY_ADDRESS ??
+      'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2',
+    /** Poll interval in ms (default 60s, aligned with classic AMM ingester) */
+    pollIntervalMs: parseInt(
+      process.env.SOROSWAP_POLL_INTERVAL_MS ?? '60000',
+      10
+    ),
+  },
   pairs: parseWatchedPairs(),
 } as const

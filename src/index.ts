@@ -17,6 +17,7 @@ import { registerWebSocket } from './api/websocket'
 
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
+import { startSoroswapIngester } from './ingesters/soroswap'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 
@@ -43,7 +44,7 @@ async function main() {
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute',
-    allowList: (req) => req.url === '/status', // Allow /status to have its own limit or be bypassed
+    allowList: (req) => req.url === '/status',
     errorResponseBuilder: (req, context) => ({
       statusCode: 429,
       error: 'Too Many Requests',
@@ -73,7 +74,6 @@ async function main() {
   await registerGraphQL(app)
   await registerWebSocket(app)
 
-
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)
   console.log(`[lens] GraphiQL at http://localhost:${config.api.port}/graphiql`)
@@ -89,6 +89,8 @@ async function main() {
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
+  // Each ingester is independently fault-isolated via restartIngester.
+  // A crash in the Soroswap ingester cannot take down SDEX or AMM.
   console.log('[lens] Starting ingesters...')
   const restartIngester = (name: string, fn: () => Promise<void>) => {
     fn().catch(err => {
@@ -98,6 +100,7 @@ async function main() {
   }
   restartIngester('SDEX', startSDEXIngester)
   restartIngester('AMM', startAMMIngester)
+  restartIngester('Soroswap', startSoroswapIngester)
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
