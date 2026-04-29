@@ -22,7 +22,7 @@
     "@x402/stellar": "^2.8.0",
     "bullmq": "^5.0.0",
     "dotenv": "^16.0.0",
-    "fastify": "^4.0.0",
+    "fastify": "^5.0.0",
     "fastify-plugin": "^4.5.0",
     "graphql": "^16.0.0",
     "ioredis": "^5.0.0",
