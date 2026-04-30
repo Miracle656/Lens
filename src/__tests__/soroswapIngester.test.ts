@@ -104,9 +104,9 @@ describe('ingestPool', () => {
   })
 
   it('stores a price point when reserves are non-zero', async () => {
-    ;(fetchPoolReserves as ReturnType<typeof vi.fn>).mockResolvedValue([10_000_000n, 2_000_000n])
+    const mockFetch = vi.fn().mockResolvedValue([10_000_000n, 2_000_000n])
 
-    await ingestPool(mockPoolEntry, mockPair as any)
+    await ingestPool(mockPoolEntry, mockPair as any, mockFetch)
 
     expect(upsertPricePoints).toHaveBeenCalledWith(
       expect.arrayContaining([
@@ -123,28 +123,27 @@ describe('ingestPool', () => {
   })
 
   it('skips price storage when pool is empty (zero reserves)', async () => {
-    ;(fetchPoolReserves as ReturnType<typeof vi.fn>).mockResolvedValue([0n, 0n])
+    const mockFetch = vi.fn().mockResolvedValue([0n, 0n])
 
-    await ingestPool(mockPoolEntry, mockPair as any)
+    await ingestPool(mockPoolEntry, mockPair as any, mockFetch)
 
     expect(upsertPricePoints).not.toHaveBeenCalled()
     expect(dispatchPriceUpdate).not.toHaveBeenCalled()
   })
 
   it('skips price storage when fetchPoolReserves returns null (RPC error)', async () => {
-    ;(fetchPoolReserves as ReturnType<typeof vi.fn>).mockResolvedValue(null)
+    const mockFetch = vi.fn().mockResolvedValue(null)
 
-    await ingestPool(mockPoolEntry, mockPair as any)
+    await ingestPool(mockPoolEntry, mockPair as any, mockFetch)
 
     expect(upsertPricePoints).not.toHaveBeenCalled()
   })
 
   it('does not throw when upsertPricePoints rejects', async () => {
-    ;(fetchPoolReserves as ReturnType<typeof vi.fn>).mockResolvedValue([1000n, 200n])
+    const mockFetch = vi.fn().mockResolvedValue([1000n, 200n])
     ;(upsertPricePoints as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('DB error'))
 
-    // Should not propagate the error
-    await expect(ingestPool(mockPoolEntry, mockPair as any)).resolves.toBeUndefined()
+    await expect(ingestPool(mockPoolEntry, mockPair as any, mockFetch)).resolves.toBeUndefined()
   })
 })
 
@@ -158,11 +157,11 @@ describe('ingestPair', () => {
   })
 
   it('calls fetchPoolsFromFactory with correct token addresses', async () => {
-    ;(fetchPoolsFromFactory as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    const mockFetchPools = vi.fn().mockResolvedValue([])
 
-    await ingestPair(mockPair as any, tokens, factory)
+    await ingestPair(mockPair as any, tokens, factory, mockFetchPools)
 
-    expect(fetchPoolsFromFactory).toHaveBeenCalledWith(
+    expect(mockFetchPools).toHaveBeenCalledWith(
       factory,
       xlmToken.address,
       usdcToken.address
@@ -182,9 +181,9 @@ describe('ingestPair', () => {
   })
 
   it('skips silently when factory returns no pools', async () => {
-    ;(fetchPoolsFromFactory as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    const mockFetchPools = vi.fn().mockResolvedValue([])
 
-    await ingestPair(mockPair as any, tokens, factory)
+    await ingestPair(mockPair as any, tokens, factory, mockFetchPools)
 
     expect(upsertPricePoints).not.toHaveBeenCalled()
   })

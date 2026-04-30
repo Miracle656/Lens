@@ -211,10 +211,11 @@ export function calcSpotPrice(reserveA: bigint, reserveB: bigint): number {
  */
 export async function ingestPool(
   poolEntry: PoolEntry,
-  pair: WatchedPair
+  pair: WatchedPair,
+  _fetchReserves = fetchPoolReserves
 ): Promise<void> {
   try {
-    const reserves = await fetchPoolReserves(poolEntry.poolAddress)
+    const reserves = await _fetchReserves(poolEntry.poolAddress)
     if (!reserves) return
 
     const [reserveA, reserveB] = reserves
@@ -275,7 +276,8 @@ export async function ingestPool(
 export async function ingestPair(
   pair: WatchedPair,
   tokens: SoroswapToken[],
-  factoryAddress: string
+  factoryAddress: string,
+  _fetchPools = fetchPoolsFromFactory
 ): Promise<void> {
   const tokenA = tokens.find(
     (t) => t.symbol.toUpperCase() === pair.assetA.code.toUpperCase()
@@ -291,7 +293,7 @@ export async function ingestPair(
     return
   }
 
-  const poolAddresses = await fetchPoolsFromFactory(
+  const poolAddresses = await _fetchPools(
     factoryAddress,
     tokenA.address,
     tokenB.address

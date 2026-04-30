@@ -12,6 +12,7 @@ const { mockHasPair, mockRegisterPair, mockPersistPair, mockGetActivePairs, mock
 
 vi.mock('../db', () => ({
   pgPool: { query: mockQuery },
+  prisma: {},
 }))
 
 vi.mock('../pairsRegistry', () => ({
@@ -32,13 +33,6 @@ vi.mock('../pairsRegistry', () => ({
     const bStr = b.issuer ? `${b.code}:${b.issuer}` : b.code
     return [aStr, bStr].sort().join('/')
   },
-}))
-
-vi.mock('../db', () => ({
-  pgPool: {
-    query: mockPgQuery,
-  },
-  prisma: {},
 }))
 
 import { registerPairsRoutes } from '../routes/pairs'
