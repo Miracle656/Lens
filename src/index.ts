@@ -20,6 +20,7 @@ import { startAMMIngester } from './ingesters/amm'
 import { startSoroswapIngester } from './ingesters/soroswap'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
+import { getMetrics } from './metrics'
 
 async function main() {
   // ── Ensure DB schema is up-to-date ────────────────────────────────────────
