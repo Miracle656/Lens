@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { price_requests_total } from '../metrics'
 import { getCachedPrice, setCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
@@ -38,6 +39,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
   app.get<{ Params: { assetA: string; assetB: string } }>(
     '/price/:assetA/:assetB',
     async (req, reply) => {
+      price_requests_total.inc()
       const { assetA, assetB } = req.params
       const pair = findPair(assetA, assetB)
       if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched` })

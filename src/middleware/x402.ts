@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import { x402_payments_received_total } from '../metrics'
 import fp from 'fastify-plugin'
 // @ts-ignore — @x402 packages ship ESM-only types incompatible with commonjs moduleResolution
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
@@ -76,6 +77,10 @@ async function x402Plugin(app: FastifyInstance) {
         reply.status(402).send({ error: 'Payment invalid', reason: result.invalidReason })
         return
       }
+
+      // Valid — increment metric
+      x402_payments_received_total.inc()
+
       // Valid — settle asynchronously and let the request through
       resourceServer.settle(payload, requirements).catch((err: unknown) => {
         app.log.error({ err }, '[oracle] x402 settle error')

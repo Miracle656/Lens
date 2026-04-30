@@ -74,6 +74,12 @@ async function main() {
   await registerGraphQL(app)
   await registerWebSocket(app)
 
+  // Prometheus metrics endpoint (un-gated)
+  app.get('/metrics', async (req, reply) => {
+    reply.type('text/plain; version=0.0.4; charset=utf-8')
+    return await getMetrics()
+  })
+
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)
   console.log(`[lens] GraphiQL at http://localhost:${config.api.port}/graphiql`)
