@@ -66,8 +66,9 @@ function makePairKey(a: string, b: string): string {
 }
 
 function findPair(assetA: string, assetB: string) {
-  const cA = assetA.split(':')[0].toUpperCase()
-  const cB = assetB.split(':')[0].toUpperCase()
+  const normalize = (a: string) => a.toLowerCase() === 'native' ? 'XLM' : a.split(':')[0].toUpperCase()
+  const cA = normalize(assetA)
+  const cB = normalize(assetB)
   return config.pairs.find(p => {
     const pA = p.assetA.code.toUpperCase()
     const pB = p.assetB.code.toUpperCase()
