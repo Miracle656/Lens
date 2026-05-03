@@ -13,18 +13,25 @@ const NETWORK = (process.env.STELLAR_NETWORK === 'mainnet' ? 'stellar:pubnet' : 
 export async function registerWebSocket(app: FastifyInstance) {
   await app.register(websocket)
 
-  const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL })
-  const resourceServer: any = new x402ResourceServer(facilitatorClient)
-    .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
-
-  await resourceServer.initialize()
+  let resourceServer: any = null
+  if (PAYMENT_ADDRESS) {
+    try {
+      const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL })
+      resourceServer = new x402ResourceServer(facilitatorClient)
+        .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
+      await resourceServer.initialize()
+    } catch (err) {
+      app.log.warn('[ws] x402 init failed — WebSocket streaming will run without payment gating:', (err as Error).message)
+      resourceServer = null
+    }
+  }
 
   app.get('/ws', { websocket: true }, (connection, req: FastifyRequest) => {
     app.log.info('[ws] New connection attempt')
 
     // x402 Auth
     const paymentHeader = (req.headers['x-payment'] as string) || (req.query as any).payment
-    
+
     const requirements = {
       scheme: 'exact' as const,
       price: '$0.50', // Premium for real-time streaming
@@ -32,8 +39,8 @@ export async function registerWebSocket(app: FastifyInstance) {
       payTo: PAYMENT_ADDRESS!,
     }
 
-    if (!PAYMENT_ADDRESS) {
-      app.log.warn('[ws] x402 disabled (PAYMENT_ADDRESS missing)')
+    if (!PAYMENT_ADDRESS || !resourceServer) {
+      app.log.warn('[ws] x402 disabled (PAYMENT_ADDRESS missing or x402 init failed)')
     } else if (!paymentHeader) {
       connection.socket.send(JSON.stringify({
         type: 'error',
