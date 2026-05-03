@@ -21,7 +21,7 @@ export async function registerWebSocket(app: FastifyInstance) {
         .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
       await resourceServer.initialize()
     } catch (err) {
-      app.log.warn('[ws] x402 init failed — WebSocket streaming will run without payment gating:', (err as Error).message)
+      app.log.warn(`[ws] x402 init failed, streaming without payment gating: ${(err as Error).message}`)
       resourceServer = null
     }
   }
