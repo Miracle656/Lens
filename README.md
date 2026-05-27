@@ -44,6 +44,118 @@ query {
 }
 ```
 
+## Usage Examples
+
+Lens gates `/price`, `/pools`, and `/candles` behind x402 micropayments on Stellar (testnet by default). The `/status` endpoint is free.
+
+### 1. Free health check (no payment)
+
+```bash
+curl http://localhost:3002/status
+# {
+#   "ok": true,
+#   "watchedPairs": ["XLM:native/USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"],
+#   "lastIndexedLedger": 53842917,
+#   "lastProcessedAt": "2026-05-07T18:45:11.220Z"
+# }
+```
+
+### 2. Paid request without `X-PAYMENT` → `402` with payment requirements
+
+```bash
+curl -i http://localhost:3002/price/XLM/USDC
+# HTTP/1.1 402 Payment Required
+# content-type: application/json
+#
+# {
+#   "x402Version": 1,
+#   "accepts": [
+#     {
+#       "scheme": "exact",
+#       "price": "$0.10",
+#       "network": "stellar:testnet",
+#       "payTo": "G...your-oracle-address..."
+#     }
+#   ],
+#   "error": "Payment required",
+#   "description": "Unified SDEX+AMM price with VWAP and best route"
+# }
+```
+
+The `accepts[]` array lists every payment requirement the server will honor. Sign one of them, encode as JSON, base64-encode, and resend with the `X-PAYMENT` header.
+
+### 3. Paid request with `X-PAYMENT` → `200` with price data
+
+```bash
+# X-PAYMENT is base64(JSON(signed payment payload — see @x402/stellar))
+curl -H "X-PAYMENT: $(cat payment.b64)" \
+     http://localhost:3002/price/XLM/USDC
+# {
+#   "assetA": "XLM",
+#   "assetB": "USDC",
+#   "pairKey": "XLM:native/USDC:GA5...",
+#   "vwap1m": "0.12450000",
+#   "vwap1h": "0.12410000",
+#   "volume24h": "1284390.5500",
+#   "priceChange24h": "0.32",
+#   "bestRoute": "amm",
+#   "lastUpdated": "2026-05-07T18:46:02.114Z"
+# }
+```
+
+### 4. Node.js — automatic payment with `@x402/fetch` + `@x402/stellar`
+
+`@x402/fetch` wraps the native `fetch` so a `402` is intercepted, signed, and retried automatically — your application code looks like a normal request.
+
+```bash
+npm install @x402/fetch @x402/stellar
+```
+
+```typescript
+import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
+import { ExactStellarScheme } from "@x402/stellar/exact/client";
+import { createEd25519Signer } from "@x402/stellar";
+
+// 1. Sign with a Stellar testnet secret (S...). Fund via friendbot first.
+const signer = createEd25519Signer(
+  process.env.STELLAR_SECRET!, // e.g. "SBN...FUNDED..."
+  "stellar:testnet",
+);
+
+// 2. Wrap fetch — `stellar:*` matches both pubnet and testnet.
+const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
+  schemes: [
+    {
+      network: "stellar:*",
+      client: new ExactStellarScheme(signer),
+    },
+  ],
+});
+
+// 3. Call the gated endpoint. The 402 → sign → 200 dance is automatic.
+const res = await fetchWithPayment("http://localhost:3002/price/XLM/USDC");
+const data = await res.json();
+console.log(`XLM/USDC VWAP-1h: ${data.vwap1h}`);
+```
+
+> **Mainnet:** swap `STELLAR_NETWORK=mainnet` on the server, point the
+> client at `stellar:pubnet`, and supply a custom Soroban RPC URL via
+> `new ExactStellarScheme(signer, { url: "https://your-rpc..." })`.
+> Stellar payments use *ledger-based* expiration (~12 ledgers ≈ 60s),
+> not timestamps.
+
+### 5. GraphQL price query
+
+```bash
+curl -X POST http://localhost:3002/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ getPrice(assetA:\"XLM\", assetB:\"USDC\") { price vwap1h volume24h priceChange24h } }"}'
+```
+
+Or interactively at [http://localhost:3002/graphiql](http://localhost:3002/graphiql).
+
+> **Note:** the current `GATED_ROUTES` map in [`src/middleware/x402.ts`](src/middleware/x402.ts) gates `/price`, `/pools`, and `/candles` only — `/graphql` is not gated. If you intend price data from GraphQL to require the same payment as REST, extend `GATED_ROUTES` (or add a per-resolver guard).
+
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
 The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
