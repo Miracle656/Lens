@@ -160,6 +160,10 @@ Or interactively at [http://localhost:3002/graphiql](http://localhost:3002/graph
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
 The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
 
+## Examples
+
+The [oracle relay example](examples/oracle-relay/README.md) shows a minimal Soroban contract plus a Node relay that reads Lens prices and pushes them on chain.
+
 ## Docker Quickstart
 The fastest way to get Lens running locally is with Docker:
 
