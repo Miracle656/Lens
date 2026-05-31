@@ -70,6 +70,28 @@ npm test --if-present
 
 Tests are being set up — see [`area:tests`](https://github.com/Miracle656/Lens/labels/area%3Atests). Candidates: route handlers, price math, x402 flow, ingester bisection, DB queries.
 
+## Releases
+
+Lens uses [changesets](https://github.com/changesets/changesets) for versioning and changelog generation.
+
+### Adding a changeset
+
+When you make a change that should appear in the changelog (a feature, fix, or any user-facing change), add a changeset in the same PR:
+
+```bash
+npx changeset
+```
+
+Pick the bump type (`patch` / `minor` / `major`) and write a short summary. This creates a markdown file under `.changeset/` — commit it alongside your change.
+
+### How a release happens
+
+1. When PRs with changesets are merged into `main`, the release workflow (`.github/workflows/release.yml`) opens (or updates) a **"Version Packages"** PR.
+2. That PR consumes the pending changeset files, bumps the version in `package.json`, and updates `CHANGELOG.md`.
+3. Merging the Version Packages PR bumps the version and creates a matching git tag and GitHub release.
+
+Lens is not published to a registry, so there is no publish step — releases are tag-only (`changeset tag`).
+
 ## Questions
 
 Open an [issue](https://github.com/Miracle656/Lens/issues) or start a [discussion](https://github.com/Miracle656/Lens/discussions).

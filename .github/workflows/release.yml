@@ -1,0 +1,55 @@
+name: Release
+
+# Opens (or updates) a "Version Packages" PR whenever there are pending
+# changesets on main. When that PR is merged, the version is bumped and a
+# matching git tag + GitHub release is created.
+#
+# Lens is not published to npm, so there is no `npm publish` step — the
+# release step runs `changeset tag`, which only creates git tags.
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Version / Tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history is required so changesets can read tags.
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Create Version PR or tag release
+        uses: changesets/action@v1
+        with:
+          # Opens/updates the "Version Packages" PR when changesets are pending.
+          version: npm run version-packages
+          # Runs once the Version PR is merged (no changesets left). Creates git
+          # tags only — Lens is not on npm, so nothing is published to a registry.
+          publish: npm run release
+          commit: 'ci(release): version packages'
+          title: 'ci(release): version packages'
+          createGithubReleases: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
