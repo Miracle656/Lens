@@ -26,7 +26,7 @@ export async function registerWebSocket(app: FastifyInstance) {
     }
   }
 
-  app.get('/ws', { websocket: true }, (connection, req: FastifyRequest) => {
+  app.get('/ws', { websocket: true, config: { public: true } }, (connection, req: FastifyRequest) => {
     app.log.info('[ws] New connection attempt')
 
     // x402 Auth
