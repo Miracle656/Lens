@@ -12,6 +12,7 @@ import { registerGraphQL } from './api/graphql'
 import { registerWebhookRoutes } from './routes/webhooks'
 import { registerCandleRoutes } from './routes/candles'
 import { registerPairsRoutes } from './routes/pairs'
+import { registerScreenerRoutes } from './routes/screener'
 import { registerX402 } from './middleware/x402'
 import { registerWebSocket } from './api/websocket'
 
@@ -72,6 +73,7 @@ async function main() {
   await registerWebhookRoutes(app)
   await registerCandleRoutes(app)
   await registerPairsRoutes(app)
+  await registerScreenerRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
