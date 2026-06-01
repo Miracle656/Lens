@@ -1,0 +1,129 @@
+name: Load test (prices)
+
+# Price endpoints are polled hard by trading bots, so we guard their latency
+# under load on a schedule (and on demand). Acceptance criterion: p95 < 80ms at
+# 5k RPS, enforced by the k6 thresholds in tests/load/prices.k6.js (the run
+# exits non-zero if a threshold is breached).
+on:
+  schedule:
+    # 04:00 UTC daily — off-peak, so a sustained 5k-RPS flood doesn't collide
+    # with interactive CI.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      rate:
+        description: 'Target requests per second'
+        required: false
+        default: '5000'
+      duration:
+        description: 'Steady-state duration (k6 syntax, e.g. 1m, 30s)'
+        required: false
+        default: '1m'
+
+jobs:
+  k6:
+    name: k6 — p95 < 80ms @ 5k RPS
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: lens
+          POSTGRES_PASSWORD: lens
+          POSTGRES_DB: lens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lens -d lens"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://lens:lens@localhost:5432/lens
+      REDIS_URL: redis://localhost:6379
+      WATCHED_PAIRS: XLM:native/USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      # Isolate endpoint performance: disable the per-key API auth so the load
+      # generator can flood without a valid key, and the auth lookup (a DB round
+      # trip per request) doesn't dominate the measurement.
+      REQUIRE_API_KEY: 'false'
+      PORT: '3002'
+      HOST: '0.0.0.0'
+      # The limiter would 429 a 5k-RPS flood from a single IP; raise the IP
+      # fallback well above the target rate so the test measures the endpoint,
+      # not the limiter.
+      RATE_LIMIT_IP_MAX: '100000000'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Generate Prisma client
+        run: node node_modules/prisma/build/index.js generate
+
+      - name: Build
+        run: npm run build
+
+      - name: Apply database schema
+        run: node node_modules/prisma/build/index.js db push --accept-data-loss
+
+      - name: Start server
+        run: |
+          npm start > server.log 2>&1 &
+          echo "SERVER_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for server to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3002/status > /dev/null; then
+              echo "Server is up."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Server did not become ready in time. Logs:"
+          cat server.log
+          exit 1
+
+      - name: Warm the price cache
+        # Prime Redis so the measured run represents the production hot path
+        # (bots polling an already-cached price), not a cold first miss.
+        run: |
+          curl -sf "http://localhost:3002/price/XLM/USDC" > /dev/null || {
+            echo "Warmup request failed. Server logs:"
+            cat server.log
+            exit 1
+          }
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 load test
+        uses: grafana/run-k6-action@v1
+        with:
+          path: tests/load/prices.k6.js
+        env:
+          BASE_URL: http://localhost:3002
+          RATE: ${{ github.event.inputs.rate || '5000' }}
+          DURATION: ${{ github.event.inputs.duration || '1m' }}
+
+      - name: Dump server logs on failure
+        if: failure()
+        run: cat server.log || true
