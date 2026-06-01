@@ -55,6 +55,20 @@ CREATE TABLE IF NOT EXISTS price_aggregates (
   PRIMARY KEY (pair_key, "window", bucket)
 );
 
+-- 1-minute price snapshot ring buffer.
+-- The ingester appends one row per watched pair per minute; a retention job
+-- prunes rows older than 30 days. Powers the /prices/history endpoint (charts,
+-- backtests, audit trails) without paying the cost of scanning raw price_points.
+CREATE TABLE IF NOT EXISTS price_snapshots (
+  pair TEXT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  price NUMERIC(36, 18) NOT NULL,
+  volume NUMERIC(36, 7) NOT NULL DEFAULT 0,
+  PRIMARY KEY (pair, ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_snapshots_pair_ts ON price_snapshots (pair, ts);
+
 -- Indexer cursor state
 CREATE TABLE IF NOT EXISTS indexer_state (
   id TEXT PRIMARY KEY,

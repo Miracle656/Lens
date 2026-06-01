@@ -67,6 +67,17 @@ model PriceAggregate {
   @@map("price_aggregates")
 }
 
+model PriceSnapshot {
+  pair   String
+  ts     DateTime
+  price  Decimal  @db.Decimal(36, 18)
+  volume Decimal  @default(0) @db.Decimal(36, 7)
+
+  @@id([pair, ts])
+  @@index([pair, ts])
+  @@map("price_snapshots")
+}
+
 model IndexerState {
   id              String    @id
   lastCursor      String?   @map("last_cursor")

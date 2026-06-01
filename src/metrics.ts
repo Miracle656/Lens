@@ -21,6 +21,12 @@ export const amm_snapshots_total = new Counter({
   registers: [register]
 })
 
+export const price_snapshots_total = new Counter({
+  name: 'price_snapshots_total',
+  help: 'Total number of 1-minute price snapshots appended',
+  registers: [register]
+})
+
 export const price_requests_total = new Counter({
   name: 'price_requests_total',
   help: 'Total number of price API requests served',

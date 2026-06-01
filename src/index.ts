@@ -13,6 +13,7 @@ import { registerWebhookRoutes } from './routes/webhooks'
 import { registerCandleRoutes } from './routes/candles'
 import { registerPairsRoutes } from './routes/pairs'
 import { registerScreenerRoutes } from './routes/screener'
+import { registerHistoryRoutes } from './api/history'
 import { registerX402 } from './middleware/x402'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
@@ -21,7 +22,9 @@ import { registerAdminRoutes } from './api/admin'
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
 import { startSoroswapIngester } from './ingesters/soroswap'
+import { startSnapshotIngester } from './ingesters/snapshot'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
+import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 import { getMetrics } from './metrics'
 
@@ -96,6 +99,7 @@ async function main() {
   await registerCandleRoutes(app)
   await registerPairsRoutes(app)
   await registerScreenerRoutes(app)
+  await registerHistoryRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
@@ -119,6 +123,16 @@ async function main() {
     console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
   }
 
+  // ── Snapshot retention worker (non-blocking — requires Redis) ─────────────
+  try {
+    const retentionQueue = createSnapshotRetentionQueue()
+    startSnapshotRetentionWorker()
+    await scheduleSnapshotRetention(retentionQueue)
+    console.log('[lens] Snapshot retention worker started')
+  } catch (err) {
+    console.warn('[lens] Snapshot retention worker skipped (Redis unavailable):', (err as Error).message)
+  }
+
   // ── Ingesters (run in background — infinite loops) ────────────────────────
   // Each ingester is independently fault-isolated via restartIngester.
   // A crash in the Soroswap ingester cannot take down SDEX or AMM.
@@ -132,6 +146,7 @@ async function main() {
   restartIngester('SDEX', startSDEXIngester)
   restartIngester('AMM', startAMMIngester)
   restartIngester('Soroswap', startSoroswapIngester)
+  restartIngester('Snapshot', startSnapshotIngester)
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
