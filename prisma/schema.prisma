@@ -101,3 +101,15 @@ model Webhook {
   @@index([assetA, assetB])
   @@map("webhooks")
 }
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  hash       String    @unique
+  label      String
+  ratePerMin Int       @default(60) @map("rate_per_min")
+  ratePerDay Int       @default(10000) @map("rate_per_day")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("api_keys")
+}

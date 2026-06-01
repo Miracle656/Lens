@@ -22,8 +22,8 @@ function findPair(assetA: string, assetB: string) {
 }
 
 export async function registerRESTRoutes(app: FastifyInstance) {
-  // GET /status
-  app.get('/status', async () => {
+  // GET /status — public health/monitoring endpoint (no API key required)
+  app.get('/status', { config: { public: true } }, async () => {
     const result = await pgPool.query(
       `SELECT last_ledger, last_processed_at FROM indexer_state ORDER BY updated_at DESC LIMIT 1`
     )

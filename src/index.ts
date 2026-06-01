@@ -14,6 +14,8 @@ import { registerCandleRoutes } from './routes/candles'
 import { registerPairsRoutes } from './routes/pairs'
 import { registerX402 } from './middleware/x402'
 import { registerWebSocket } from './api/websocket'
+import { registerApiKeyAuth } from './api/auth'
+import { registerAdminRoutes } from './api/admin'
 
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
@@ -42,9 +44,25 @@ async function main() {
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
   await app.register(compress)
+
+  // API-key authentication — validates Authorization: Bearer <key> and attaches
+  // per-key quota metadata to req.apiKey. Registered BEFORE the rate limiter so
+  // that req.apiKey is populated when the limiter evaluates its per-key quota
+  // (both run in the onRequest phase, in registration order). Disabled when
+  // REQUIRE_API_KEY=false. Routes marked `config.public` bypass auth.
+  if (process.env.REQUIRE_API_KEY !== 'false') {
+    await app.register(registerApiKeyAuth)
+  } else {
+    app.log.warn('[auth] REQUIRE_API_KEY=false — API key authentication disabled')
+  }
+
+  // Per-key rate quotas: the limit is derived from the authenticated key's
+  // metadata (req.apiKey, set by the auth hook above). Unauthenticated/public
+  // requests fall back to a conservative shared limit keyed by IP.
   await app.register(rateLimit, {
-    max: 100,
+    max: (req) => req.apiKey?.ratePerMin ?? 100,
     timeWindow: '1 minute',
+    keyGenerator: (req) => req.apiKey?.id ?? req.ip,
     allowList: (req) => req.url === '/status',
     errorResponseBuilder: (req, context) => ({
       statusCode: 429,
@@ -67,6 +85,10 @@ async function main() {
     }
   })
 
+  // Admin endpoints (key issuance/revocation) — gated by ADMIN_TOKEN. Marked
+  // `config.public` so the API-key auth hook skips them.
+  await registerAdminRoutes(app)
+
   await app.register(registerX402)
   await registerRESTRoutes(app)
   await registerWebhookRoutes(app)
@@ -75,8 +97,8 @@ async function main() {
   await registerGraphQL(app)
   await registerWebSocket(app)
 
-  // Prometheus metrics endpoint (un-gated)
-  app.get('/metrics', async (req, reply) => {
+  // Prometheus metrics endpoint (un-gated, public — no API key required)
+  app.get('/metrics', { config: { public: true } }, async (req, reply) => {
     reply.type('text/plain; version=0.0.4; charset=utf-8')
     return await getMetrics()
   })

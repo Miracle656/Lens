@@ -1,0 +1,108 @@
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import { randomBytes } from 'crypto'
+import { prisma } from '../db'
+import { hashApiKey } from './auth'
+
+/** Generates a new opaque API key with a recognizable `lens_` prefix. */
+export function generateApiKey(): string {
+  return `lens_${randomBytes(24).toString('hex')}`
+}
+
+/**
+ * Guards admin routes with a shared secret supplied via the `ADMIN_TOKEN`
+ * env var, sent as `X-Admin-Token` (or `Authorization: Bearer <token>`).
+ * Returns true if the caller is authorized.
+ */
+function isAdminAuthorized(req: FastifyRequest): boolean {
+  const adminToken = process.env.ADMIN_TOKEN
+  if (!adminToken) return false
+  const supplied =
+    (req.headers['x-admin-token'] as string | undefined) ??
+    req.headers['authorization']?.replace(/^Bearer\s+/i, '')
+  return supplied === adminToken
+}
+
+interface CreateKeyBody {
+  label?: string
+  ratePerMin?: number
+  ratePerDay?: number
+}
+
+/**
+ * Registers admin-only endpoints for minting and revoking API keys.
+ *
+ * - `POST /admin/keys`   — mint a new key (returns the plaintext key ONCE).
+ * - `DELETE /admin/keys/:id` — revoke an existing key.
+ *
+ * All routes are marked `config.public = true` so the API-key auth hook skips
+ * them; they enforce their own `ADMIN_TOKEN` check instead.
+ */
+export async function registerAdminRoutes(app: FastifyInstance) {
+  app.post<{ Body: CreateKeyBody }>(
+    '/admin/keys',
+    { config: { public: true } },
+    async (req: FastifyRequest<{ Body: CreateKeyBody }>, reply: FastifyReply) => {
+      if (!isAdminAuthorized(req)) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: 'Provide a valid X-Admin-Token header.',
+        })
+      }
+
+      const { label, ratePerMin, ratePerDay } = req.body ?? {}
+      if (!label || typeof label !== 'string' || label.trim().length === 0) {
+        return reply.status(400).send({ error: 'label is required' })
+      }
+
+      // Generate the key, store only its hash, and return the plaintext once.
+      const plaintext = generateApiKey()
+      const record = await prisma.apiKey.create({
+        data: {
+          hash: hashApiKey(plaintext),
+          label: label.trim(),
+          ...(ratePerMin !== undefined ? { ratePerMin } : {}),
+          ...(ratePerDay !== undefined ? { ratePerDay } : {}),
+        },
+      })
+
+      return reply.status(201).send({
+        id: record.id,
+        label: record.label,
+        ratePerMin: record.ratePerMin,
+        ratePerDay: record.ratePerDay,
+        // The plaintext key is shown only at creation time and never stored.
+        key: plaintext,
+        createdAt: record.createdAt,
+      })
+    },
+  )
+
+  app.delete<{ Params: { id: string } }>(
+    '/admin/keys/:id',
+    { config: { public: true } },
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      if (!isAdminAuthorized(req)) {
+        return reply.status(401).send({
+          error: 'Unauthorized',
+          message: 'Provide a valid X-Admin-Token header.',
+        })
+      }
+
+      const { id } = req.params
+      const existing = await prisma.apiKey.findUnique({ where: { id } })
+      if (!existing) {
+        return reply.status(404).send({ error: 'API key not found' })
+      }
+      if (existing.revokedAt) {
+        return reply.status(200).send({ id, revoked: true, alreadyRevoked: true })
+      }
+
+      await prisma.apiKey.update({
+        where: { id },
+        data: { revokedAt: new Date() },
+      })
+
+      return reply.status(200).send({ id, revoked: true })
+    },
+  )
+}

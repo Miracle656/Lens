@@ -12,6 +12,7 @@
     "version-packages": "changeset version",
     "release": "changeset tag",
     "oracle:relay": "tsx examples/oracle-relay/relay.ts",
+    "key:issue": "tsx scripts/issue-api-key.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate"
   },

@@ -63,3 +63,17 @@ CREATE TABLE IF NOT EXISTS indexer_state (
   last_processed_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- API keys for authenticated, rate-quota'd access.
+-- Only the SHA-256 hash of each key is ever stored — never the plaintext.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  rate_per_min INTEGER NOT NULL DEFAULT 60,
+  rate_per_day INTEGER NOT NULL DEFAULT 10000,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys (hash);
