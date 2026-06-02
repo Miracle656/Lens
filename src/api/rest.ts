@@ -5,6 +5,14 @@ import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
 import { config } from '../config'
+import {
+  statusResponseSchema,
+  priceResponseSchema,
+  routeResponseSchema,
+  historyResponseSchema,
+  poolsResponseSchema,
+  installResponseValidation,
+} from './schemas'
 
 function makePairKey(a: string, b: string): string {
   return [a, b].sort().join('/')
@@ -22,8 +30,13 @@ function findPair(assetA: string, assetB: string) {
 }
 
 export async function registerRESTRoutes(app: FastifyInstance) {
+  // Validate every response against its declared schema in dev/test (no-op in
+  // production). Must run before the routes below are registered so they pick
+  // up the validating serializer.
+  installResponseValidation(app)
+
   // GET /status — public health/monitoring endpoint (no API key required)
-  app.get('/status', { config: { public: true } }, async () => {
+  app.get('/status', { config: { public: true }, schema: { response: { 200: statusResponseSchema } } }, async () => {
     const result = await pgPool.query(
       `SELECT last_ledger, last_processed_at FROM indexer_state ORDER BY updated_at DESC LIMIT 1`
     )
@@ -39,6 +52,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
   // GET /price/:assetA/:assetB
   app.get<{ Params: { assetA: string; assetB: string } }>(
     '/price/:assetA/:assetB',
+    { schema: { response: { 200: priceResponseSchema } } },
     async (req, reply) => {
       price_requests_total.inc()
       const { assetA, assetB } = req.params
@@ -76,6 +90,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     Querystring: { amount?: string }
   }>(
     '/price/:assetA/:assetB/route',
+    { schema: { response: { 200: routeResponseSchema } } },
     async (req, reply) => {
       const { assetA, assetB } = req.params
       const amount = parseFloat(req.query.amount ?? '1000')
@@ -93,6 +108,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     Querystring: { window?: string; limit?: string }
   }>(
     '/price/:assetA/:assetB/history',
+    { schema: { response: { 200: historyResponseSchema } } },
     async (req, reply) => {
       const { assetA, assetB } = req.params
       const window = req.query.window ?? '1h'
@@ -134,7 +150,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
   )
 
   // GET /pools
-  app.get('/pools', async () => {
+  app.get('/pools', { schema: { response: { 200: poolsResponseSchema } } }, async () => {
     const result = await pgPool.query(
       `SELECT DISTINCT ON (pool_id) pool_id, asset_a, asset_b,
               reserve_a::float, reserve_b::float, spot_price::float, fee_bp, timestamp
