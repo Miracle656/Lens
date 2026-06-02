@@ -4,6 +4,7 @@ import { config } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
+import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
 const horizonServer = new Horizon.Server(config.horizon.url)
@@ -85,6 +86,13 @@ export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> 
 
       const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
       lastPrice.set(pair.pairKey, spotPrice)
+
+      publishPriceUpdate({
+        pair: pair.pairKey,
+        price: spotPrice,
+        ts: new Date().toISOString(),
+      })
+
       dispatchPriceUpdate({
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
@@ -145,6 +153,12 @@ export async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<vo
     const lastCursor = records[records.length - 1].paging_token
     await setIndexerCursor(stateId, lastCursor)
     console.log(`[amm] Pool ${pool.id.slice(0, 8)}: ingested ${points.length} trades`)
+
+    publishPriceUpdate({
+      pair: pair.pairKey,
+      price: currentPrice,
+      ts: points[points.length - 1].timestamp.toISOString(),
+    })
 
     dispatchPriceUpdate({
       assetA: pair.assetA.code,
