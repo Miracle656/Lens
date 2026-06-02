@@ -1,0 +1,110 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import fc from 'fast-check'
+import { getBestRoute } from '../src/aggregator/bestRoute'
+import { pgPool } from '../src/db'
+import * as StellarSdk from '@stellar/stellar-sdk'
+
+vi.mock('../src/db', () => ({
+  pgPool: {
+    query: vi.fn(),
+  },
+}))
+
+vi.mock('@stellar/stellar-sdk', () => {
+  const callFn = vi.fn()
+  return {
+    Horizon: {
+      Server: vi.fn(function () {
+        return {
+          strictSendPaths: vi.fn().mockReturnThis(),
+          call: callFn,
+        }
+      }),
+    },
+    Asset: Object.assign(
+      vi.fn(function (code: string, issuer: string | null) {
+        return { code, issuer }
+      }),
+      { native: vi.fn(() => 'native') }
+    ),
+    __mockCall: callFn,
+  }
+})
+
+describe('Price aggregator property tests', () => {
+  const assetA = { code: 'USDC', issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' }
+  const assetB = { code: 'XLM', issuer: null }
+  const pairKey = 'USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5/XLM'
+  const mockQuery = vi.mocked(pgPool.query)
+  const mockCall = (StellarSdk as any).__mockCall as ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('produces valid route results for random venue prices', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.float({ min: 0, max: 2000, noNaN: true, noDefaultInfinity: true, noNegativeZero: true }),
+        fc.float({ min: 0, max: 2000, noNaN: true, noDefaultInfinity: true, noNegativeZero: true }),
+        fc.integer({ min: 1, max: 20000 }),
+        async (sdexPrice, ammPrice, amount) => {
+          const feeBp = 30
+          const fee = 1 - feeBp / 10000
+
+          if (sdexPrice <= 0) {
+            mockCall.mockResolvedValue({ records: [] })
+          } else {
+            mockCall.mockResolvedValue({ records: [{ destination_amount: String(sdexPrice * amount) }] })
+          }
+
+          if (ammPrice <= 0) {
+            mockQuery.mockResolvedValue({ rows: [] } as any)
+          } else {
+            const reserveA = 10000
+            const reserveB = String((ammPrice * (reserveA + amount * fee)) / fee)
+            mockQuery.mockResolvedValue({ rows: [{ reserve_a: String(reserveA), reserve_b: reserveB, fee_bp: String(feeBp) }] } as any)
+          }
+
+          if (sdexPrice === 0 && ammPrice === 0) {
+            await expect(getBestRoute(assetA, assetB, pairKey, amount)).rejects.toThrow('No pricing data available')
+            return
+          }
+
+          const result = await getBestRoute(assetA, assetB, pairKey, amount)
+          expect(result.sdexPrice).toBeGreaterThanOrEqual(0)
+          expect(result.ammPrice).toBeGreaterThanOrEqual(0)
+          expect(['SDEX', 'AMM', 'SPLIT', 'UNKNOWN']).toContain(result.route)
+          expect(result.estimatedOutput).toBeGreaterThanOrEqual(0)
+          expect(result.slippagePct).toBeGreaterThanOrEqual(0)
+          expect(result.slippagePct).toBeCloseTo(0, 6)
+
+          if (sdexPrice === 0) {
+            expect(result.route).toBe('AMM')
+            expect(result.estimatedOutput).toBeCloseTo(ammPrice * amount, 6)
+          }
+          if (ammPrice === 0) {
+            expect(result.route).toBe('SDEX')
+            expect(result.estimatedOutput).toBeCloseTo(sdexPrice * amount, 6)
+          }
+          if (sdexPrice > 0 && ammPrice > 0) {
+            const diff = Math.abs(sdexPrice - ammPrice) / Math.max(sdexPrice, ammPrice)
+            if (diff < 0.001) {
+              if (amount > 10000) {
+                expect(result.route).toBe('SPLIT')
+              } else {
+                expect(['SDEX', 'AMM']).toContain(result.route)
+              }
+            } else if (sdexPrice > ammPrice) {
+              expect(result.route).toBe('SDEX')
+            } else {
+              expect(result.route).toBe('AMM')
+            }
+            expect(result.estimatedOutput).toBeCloseTo(Math.max(sdexPrice, ammPrice) * amount, 6)
+          }
+        }
+      ),
+      { numRuns: 10000 }
+    )
+  })
+})

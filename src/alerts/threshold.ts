@@ -19,11 +19,19 @@ export interface ThresholdAlertPayload {
   timestamp: string
 }
 
+function isThresholdDirection(value: string): value is ThresholdDirection {
+  return value === 'above' || value === 'below'
+}
+
 export function crossesThreshold(
-  subscription: Pick<ThresholdAlertSubscription, 'threshold' | 'direction'>,
+  subscription: Pick<ThresholdAlertSubscription, 'threshold'> & { direction: string },
   previousPrice: number,
   currentPrice: number,
 ): boolean {
+  if (!isThresholdDirection(subscription.direction)) {
+    throw new Error(`Unsupported threshold direction: ${subscription.direction}`)
+  }
+
   if (subscription.direction === 'above') {
     return previousPrice < subscription.threshold && currentPrice >= subscription.threshold
   }
@@ -32,12 +40,16 @@ export function crossesThreshold(
 }
 
 export function buildThresholdAlertPayload(
-  subscription: Pick<ThresholdAlertSubscription, 'threshold' | 'direction'>,
+  subscription: Pick<ThresholdAlertSubscription, 'threshold'> & { direction: string },
   assetA: string,
   assetB: string,
   price: number,
   timestamp = new Date().toISOString(),
 ): ThresholdAlertPayload {
+  if (!isThresholdDirection(subscription.direction)) {
+    throw new Error(`Unsupported threshold direction: ${subscription.direction}`)
+  }
+
   return {
     assetA,
     assetB,

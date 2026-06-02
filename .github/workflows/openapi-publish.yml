@@ -1,0 +1,54 @@
+name: OpenAPI publish
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    name: Generate and publish OpenAPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run openapi:gen
+      - run: |
+          mkdir -p ./openapi-site
+          cp openapi.json ./openapi-site/openapi.json
+          cat > ./openapi-site/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Lens OpenAPI</title>
+            <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css" />
+          </head>
+          <body>
+            <div id="swagger-ui"></div>
+            <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+            <script>
+              window.onload = () => {
+                window.ui = SwaggerUIBundle({
+                  url: 'openapi.json',
+                  dom_id: '#swagger-ui',
+                  presets: [SwaggerUIBundle.presets.apis],
+                  layout: 'BaseLayout'
+                })
+              }
+            </script>
+          </body>
+          </html>
+          EOF
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./openapi-site
+          publish_branch: gh-pages
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'

@@ -1,6 +1,10 @@
 import 'dotenv/config'
 import { execSync } from 'child_process'
 import Fastify from 'fastify'
+
+if (!process.env.DIRECT_DATABASE_URL && process.env.DATABASE_URL) {
+  process.env.DIRECT_DATABASE_URL = process.env.DATABASE_URL
+}
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'

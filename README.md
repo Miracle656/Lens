@@ -158,7 +158,7 @@ Or interactively at [http://localhost:3002/graphiql](http://localhost:3002/graph
 
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
-The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
+The API specification is available in [OpenAPI 3.0 format](openapi.yaml) and is auto-published to GitHub Pages at https://miracle656.github.io/lens/openapi.json.
 
 ## Examples
 
