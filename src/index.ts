@@ -66,9 +66,12 @@ async function main() {
 
   // Per-key rate quotas: the limit is derived from the authenticated key's
   // metadata (req.apiKey, set by the auth hook above). Unauthenticated/public
-  // requests fall back to a conservative shared limit keyed by IP.
+  // requests fall back to a conservative shared limit keyed by IP. The IP
+  // fallback is overridable via RATE_LIMIT_IP_MAX so load tests (which flood
+  // from a single IP without a key) can measure the endpoint, not the limiter.
+  const ipRateLimitMax = parseInt(process.env.RATE_LIMIT_IP_MAX ?? '100', 10)
   await app.register(rateLimit, {
-    max: (req) => req.apiKey?.ratePerMin ?? 100,
+    max: (req) => req.apiKey?.ratePerMin ?? ipRateLimitMax,
     timeWindow: '1 minute',
     keyGenerator: (req) => req.apiKey?.id ?? req.ip,
     allowList: (req) => req.url === '/status',
