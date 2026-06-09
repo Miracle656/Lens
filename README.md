@@ -23,7 +23,8 @@ Aggregates price data from Stellar's Classic Order Book (SDEX) and AMM Liquidity
 | GET | `/status` | Indexer health |
 
 ### GraphQL
-Available at `/graphql` with GraphiQL IDE at `/graphiql`.
+Available at `/graphql` with GraphiQL IDE at `/graphiql`. Real-time price
+streaming is available via the `priceUpdated` [subscription](#graphql-subscriptions-live-prices).
 
 ```graphql
 query {
@@ -44,6 +45,60 @@ query {
   }
 }
 ```
+
+### GraphQL Subscriptions (live prices)
+
+Lens exposes a `priceUpdated(pair)` subscription that pushes a message every time
+an ingester (SDEX, Horizon AMM, or Soroswap) records a new price for the pair.
+It runs over the same `/graphql` endpoint using the `graphql-transport-ws`
+protocol, so any [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) client works.
+
+```graphql
+subscription {
+  priceUpdated(pair: "XLM/USDC") {
+    pair
+    price
+    ts
+  }
+}
+```
+
+```bash
+npm install graphql-ws ws
+```
+
+```typescript
+import { createClient } from "graphql-ws";
+import WebSocket from "ws"; // browsers already have WebSocket globally
+
+const client = createClient({
+  url: "ws://localhost:3002/graphql",
+  webSocketImpl: WebSocket, // omit in the browser
+});
+
+// `subscribe` returns an unsubscribe function — call it to close the channel.
+const unsubscribe = client.subscribe(
+  {
+    query: `subscription ($pair: String!) {
+      priceUpdated(pair: $pair) { pair price ts }
+    }`,
+    variables: { pair: "XLM/USDC" },
+  },
+  {
+    next: ({ data }) => console.log("price:", data.priceUpdated),
+    error: (err) => console.error("subscription error:", err),
+    complete: () => console.log("subscription closed"),
+  },
+);
+
+// Later — stop receiving updates and close the socket cleanly:
+// unsubscribe();
+```
+
+> **Note:** the `pair` argument is the canonical `pairKey` (alphabetically
+> sorted, e.g. `XLM:native/USDC:GA5...`). Use the `listPairs` query to discover
+> the exact keys being indexed. Only the pair you subscribe to is delivered;
+> updates for other pairs are filtered out server-side.
 
 ## Usage Examples
 

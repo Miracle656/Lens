@@ -4,6 +4,7 @@ import { config } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
+import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
 const horizonServer = new Horizon.Server(config.horizon.url)
@@ -70,6 +71,12 @@ export async function ingestPair(pair: WatchedPair): Promise<void> {
       const lastCursor = trades.records[trades.records.length - 1].paging_token
       await setIndexerCursor(stateId, lastCursor)
       console.log(`[sdex] ${pair.pairKey}: ingested ${points.length} trades`)
+
+      publishPriceUpdate({
+        pair: pair.pairKey,
+        price: currentPrice,
+        ts: points[points.length - 1].timestamp.toISOString(),
+      })
 
       dispatchPriceUpdate({
         assetA: pair.assetA.code,

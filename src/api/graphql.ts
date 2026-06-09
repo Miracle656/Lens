@@ -1,11 +1,17 @@
 import type { FastifyInstance } from 'fastify'
 import { price_requests_total } from '../metrics'
-import mercurius from 'mercurius'
+import mercurius, { withFilter, type MercuriusContext } from 'mercurius'
 import { getCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
 import { config } from '../config'
+import { priceEmitter, PRICE_PUBLISHED, type PricePublishedEvent } from '../events'
+
+// Mercurius pubsub topic that carries every new price. A single app-level
+// listener bridges the ingesters' in-process `priceEmitter` onto this topic;
+// each subscriber then filters it down to the pair they asked for.
+const PRICE_TOPIC = 'PRICE_UPDATED'
 
 const schema = `
   type AggregatedPrice {
@@ -53,11 +59,22 @@ const schema = `
     low: Float
   }
 
+  type PriceUpdate {
+    pair: String!
+    price: Float!
+    ts: String!
+  }
+
   type Query {
     getPrice(assetA: String!, assetB: String!): AggregatedPrice
     getBestRoute(assetA: String!, assetB: String!, amount: Float!): RouteInfo
     getPriceHistory(assetA: String!, assetB: String!, window: String!, limit: Int): [PriceBucket]
     listPairs: [String]!
+  }
+
+  type Subscription {
+    """Streams a PriceUpdate every time the ingester records a new price for the given pair."""
+    priceUpdated(pair: String!): PriceUpdate!
   }
 `
 
@@ -142,6 +159,15 @@ const resolvers = {
       return config.pairs.map(p => p.pairKey)
     },
   },
+
+  Subscription: {
+    priceUpdated: {
+      subscribe: withFilter<{ priceUpdated: PricePublishedEvent }, unknown, MercuriusContext, { pair: string }>(
+        (_root, _args, { pubsub }) => pubsub.subscribe(PRICE_TOPIC),
+        (payload, { pair }) => payload.priceUpdated.pair === pair
+      ),
+    },
+  },
 }
 
 export async function registerGraphQL(app: FastifyInstance) {
@@ -150,5 +176,28 @@ export async function registerGraphQL(app: FastifyInstance) {
     resolvers,
     graphiql: true,
     path: '/graphql',
+    subscription: {
+      // Speak the `graphql-transport-ws` subprotocol (the modern `graphql-ws`
+      // library) rather than the legacy `subscriptions-transport-ws`.
+      fullWsTransport: true,
+      wsDefaultSubprotocol: 'graphql-transport-ws',
+    },
+  })
+
+  // Bridge: forward every price the ingesters emit onto the GraphQL pubsub
+  // topic. Mercurius wraps the payload under the subscription field name so
+  // `withFilter` and the resolver receive `{ priceUpdated: <event> }`.
+  const onPricePublished = (event: PricePublishedEvent) => {
+    app.graphql.pubsub.publish({
+      topic: PRICE_TOPIC,
+      payload: { priceUpdated: event },
+    })
+  }
+  priceEmitter.on(PRICE_PUBLISHED, onPricePublished)
+
+  // Detach the listener when the server shuts down so repeated
+  // register/close cycles (e.g. in tests) don't leak listeners.
+  app.addHook('onClose', async () => {
+    priceEmitter.off(PRICE_PUBLISHED, onPricePublished)
   })
 }

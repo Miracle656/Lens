@@ -23,6 +23,7 @@ import { config } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
+import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -246,6 +247,12 @@ export async function ingestPool(
 
     const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
     lastPrice.set(pair.pairKey, spotPrice)
+
+    publishPriceUpdate({
+      pair: pair.pairKey,
+      price: spotPrice,
+      ts: new Date().toISOString(),
+    })
 
     dispatchPriceUpdate({
       assetA: pair.assetA.code,
