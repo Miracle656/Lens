@@ -26,15 +26,15 @@ export async function registerWebSocket(app: FastifyInstance) {
     }
   }
 
-  app.get('/ws', { websocket: true, config: { public: true } }, (connection, req: FastifyRequest) => {
+  // @fastify/websocket v11: handler receives (socket, req) directly — no connection wrapper
+  app.get('/ws', { websocket: true, config: { public: true } }, (socket: any, req: FastifyRequest) => {
     app.log.info('[ws] New connection attempt')
 
-    // x402 Auth
     const paymentHeader = (req.headers['x-payment'] as string) || (req.query as any).payment
 
     const requirements = {
       scheme: 'exact' as const,
-      price: '$0.50', // Premium for real-time streaming
+      price: '$0.50',
       network: NETWORK,
       payTo: PAYMENT_ADDRESS!,
     }
@@ -42,52 +42,47 @@ export async function registerWebSocket(app: FastifyInstance) {
     if (!PAYMENT_ADDRESS || !resourceServer) {
       app.log.warn('[ws] x402 disabled (PAYMENT_ADDRESS missing or x402 init failed)')
     } else if (!paymentHeader) {
-      connection.socket.send(JSON.stringify({
+      socket.send(JSON.stringify({
         type: 'error',
         status: 402,
         message: 'Payment required for real-time streaming',
         requirements
       }))
-      connection.socket.close()
+      socket.close()
       return
     } else {
-      // Verify payment
       verifyPayment(paymentHeader, requirements, resourceServer)
         .then(isValid => {
           if (!isValid) {
-            connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid payment' }))
-            connection.socket.close()
+            socket.send(JSON.stringify({ type: 'error', message: 'Invalid payment' }))
+            socket.close()
           } else {
-            setupStream(connection, req)
+            setupStream(socket, req)
           }
         })
         .catch(err => {
-          connection.socket.send(JSON.stringify({ type: 'error', message: err.message }))
-          connection.socket.close()
+          socket.send(JSON.stringify({ type: 'error', message: err.message }))
+          socket.close()
         })
       return
     }
 
-    // If x402 is disabled or already passed (shouldn't happen with logic above but for safety)
-    setupStream(connection, req)
+    setupStream(socket, req)
   })
 
-  function setupStream(connection: any, req: FastifyRequest) {
+  function setupStream(socket: any, req: FastifyRequest) {
     app.log.info('[ws] Connection authorized')
-    connection.socket.send(JSON.stringify({ type: 'status', message: 'Streaming active' }))
+    socket.send(JSON.stringify({ type: 'status', message: 'Streaming active' }))
 
     const onPriceUpdate = (event: PriceUpdateEvent) => {
-      if (connection.socket.readyState === 1) { // OPEN
-        connection.socket.send(JSON.stringify({
-          type: 'price_update',
-          ...event
-        }))
+      if (socket.readyState === 1) { // OPEN
+        socket.send(JSON.stringify({ type: 'price_update', ...event }))
       }
     }
 
     priceEmitter.on(PRICE_UPDATE, onPriceUpdate)
 
-    connection.socket.on('close', () => {
+    socket.on('close', () => {
       app.log.info('[ws] Connection closed')
       priceEmitter.off(PRICE_UPDATE, onPriceUpdate)
     })

@@ -13,8 +13,7 @@ describe('WebSocket subscription full cycle', () => {
     app = Fastify({ logger: false })
     await registerWebSocket(app)
     await app.listen({ port: 0, host: '127.0.0.1' })
-    const address = app.server?.address() as any
-    port = address.port
+    port = (app.server.address() as any).port
   })
 
   afterAll(async () => {
@@ -24,43 +23,61 @@ describe('WebSocket subscription full cycle', () => {
   it('connects → subscribes → receives updates → disconnects', async () => {
     const before = priceEmitter.listenerCount(PRICE_UPDATE)
 
+    const messages: string[] = []
+    const waiters: Array<(msg: string) => void> = []
+
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-    await new Promise<void>((resolve, reject) => {
-      ws.on('open', () => resolve())
-      ws.on('error', (err) => reject(err))
+
+    // Attach message listener before awaiting open to avoid the race where the
+    // server sends the status message synchronously on connect.
+    ws.on('message', (data) => {
+      const msg = data.toString()
+      const waiter = waiters.shift()
+      if (waiter) waiter(msg)
+      else messages.push(msg)
     })
 
-    // First message should be streaming status
-    const firstRaw = await new Promise<string>(resolve => ws.once('message', (data) => resolve(data.toString())))
-    const first = JSON.parse(firstRaw)
+    const nextMessage = () =>
+      new Promise<string>((resolve) => {
+        const buffered = messages.shift()
+        if (buffered !== undefined) resolve(buffered)
+        else waiters.push(resolve)
+      })
+
+    // 1. Connect
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', () => resolve())
+      ws.on('error', reject)
+    })
+
+    // 2. Receive initial status (may already be buffered)
+    const first = JSON.parse(await nextMessage())
     expect(first.type).toBe('status')
     expect(first.message).toBe('Streaming active')
 
-    // Listener registered on the server
+    // 3. Listener should now be registered server-side
     expect(priceEmitter.listenerCount(PRICE_UPDATE)).toBe(before + 1)
 
-    // Emit a price update and verify it's received
+    // 4. Emit a price update and verify it's received
     const event = {
       assetA: 'XLM',
       assetB: 'USDC',
       previousPrice: 1.0,
       currentPrice: 1.2345,
-      timestamp: new Date()
+      timestamp: new Date(),
     }
-
-    const nextRaw = new Promise<string>(resolve => ws.once('message', (data) => resolve(data.toString())))
     priceEmitter.emit(PRICE_UPDATE, event)
-    const next = JSON.parse(await nextRaw)
 
+    const next = JSON.parse(await nextMessage())
     expect(next.type).toBe('price_update')
     expect(next.assetA).toBe(event.assetA)
     expect(next.assetB).toBe(event.assetB)
     expect(next.currentPrice).toBe(event.currentPrice)
     expect(new Date(next.timestamp).toISOString()).toBe(event.timestamp.toISOString())
 
-    // Close connection and ensure listener cleanup
+    // 5. Disconnect and verify listener cleanup
     ws.close()
-    await new Promise<void>(resolve => ws.on('close', () => resolve()))
+    await new Promise<void>((resolve) => ws.on('close', () => resolve()))
 
     expect(priceEmitter.listenerCount(PRICE_UPDATE)).toBe(before)
   })
