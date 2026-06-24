@@ -54,6 +54,8 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     const recent = new Date(now.getTime() - 10000).toISOString() // 10s ago
 
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('price::numeric') && sql.includes('FROM price_points') && sql.includes('SDEX')) return { rows: [{ price: '0.1', timestamp: new Date().toISOString() }] }
+      if (sql.includes('AVG(ps.spot_price::numeric)')) return { rows: [{ spot_price: '0.1', timestamp: new Date().toISOString() }] }
       if (sql.includes('AVG(spot_price::numeric)')) return { rows: [{ amm_price: '0.1' }] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: recent }] }
       if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }, { source: 'AMM', vol: '50' }] }
@@ -79,6 +81,8 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     const twoMinAgo = new Date(now.getTime() - 120000).toISOString() // 2m ago
 
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('price::numeric') && sql.includes('FROM price_points') && sql.includes('SDEX')) return { rows: [{ price: '0.1', timestamp: new Date().toISOString() }] }
+      if (sql.includes('AVG(ps.spot_price::numeric)')) return { rows: [{ spot_price: '0.1', timestamp: new Date().toISOString() }] }
       if (sql.includes('AVG(spot_price::numeric)')) return { rows: [{ amm_price: '0.1' }] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: twoMinAgo }] }
       if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }] }
@@ -101,6 +105,8 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     const tenMinAgo = new Date(now.getTime() - 600000).toISOString() // 10m ago
 
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('price::numeric') && sql.includes('FROM price_points') && sql.includes('SDEX')) return { rows: [{ price: '0.1', timestamp: new Date().toISOString() }] }
+      if (sql.includes('AVG(ps.spot_price::numeric)')) return { rows: [{ spot_price: '0.1', timestamp: new Date().toISOString() }] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: tenMinAgo }] }
       if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '1' }] }
       if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }] }
@@ -119,6 +125,8 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
 
   it('returns unknown confidence when no trades found', async () => {
     mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('price::numeric') && sql.includes('FROM price_points') && sql.includes('SDEX')) return { rows: [] }
+      if (sql.includes('AVG(ps.spot_price::numeric)')) return { rows: [] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: null }] }
       return { rows: [] }
     })

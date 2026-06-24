@@ -1,17 +1,18 @@
 import type { FastifyInstance } from 'fastify'
+import { getBestRoute } from '../aggregator/bestRoute'
+import { getAggregatedPrice } from '../aggregator/vwap'
+import { getMedianPrice, type PriceSource } from '../pricing/median'
+import { config } from '../config'
+import { pgPool } from '../db'
 import { price_requests_total } from '../metrics'
 import { getCachedPrice, setCachedPrice } from '../redis'
-import { getAggregatedPrice } from '../aggregator/vwap'
-import { getBestRoute } from '../aggregator/bestRoute'
-import { pgPool } from '../db'
-import { config } from '../config'
 import {
-  statusResponseSchema,
-  priceResponseSchema,
-  routeResponseSchema,
-  historyResponseSchema,
-  poolsResponseSchema,
-  installResponseValidation,
+    historyResponseSchema,
+    installResponseValidation,
+    poolsResponseSchema,
+    priceResponseSchema,
+    routeResponseSchema,
+    statusResponseSchema,
 } from './schemas'
 
 function makePairKey(a: string, b: string): string {
@@ -27,6 +28,56 @@ function findPair(assetA: string, assetB: string) {
     const pB = p.assetB.code.toUpperCase()
     return (cA === pA && cB === pB) || (cA === pB && cB === pA)
   })
+}
+
+async function extractSourcePrices(pairKey: string): Promise<PriceSource[]> {
+  const sources: PriceSource[] = []
+
+  try {
+    // Get the latest SDEX price
+    const sdexResult = await pgPool.query(
+      `SELECT price::numeric, timestamp
+       FROM price_points
+       WHERE pair_key = $1 AND source = 'SDEX'
+       ORDER BY timestamp DESC LIMIT 1`,
+      [pairKey]
+    )
+
+    if (sdexResult.rows[0]) {
+      const row = sdexResult.rows[0]
+      sources.push({
+        id: 'SDEX',
+        price: parseFloat(row.price),
+        timestamp: new Date(row.timestamp).getTime(),
+        priority: 0,
+      })
+    }
+
+    // Get the latest AMM price
+    const ammResult = await pgPool.query(
+      `SELECT AVG(ps.spot_price::numeric) AS spot_price, MAX(ps.timestamp) AS timestamp
+       FROM pool_snapshots ps
+       WHERE ps.pool_id IN (
+         SELECT DISTINCT pool_id FROM price_points
+         WHERE pair_key = $1 AND source = 'AMM' AND pool_id IS NOT NULL
+       )`,
+      [pairKey]
+    )
+
+    if (ammResult.rows[0] && ammResult.rows[0].spot_price) {
+      sources.push({
+        id: 'AMM',
+        price: parseFloat(ammResult.rows[0].spot_price),
+        timestamp: new Date(ammResult.rows[0].timestamp).getTime(),
+        priority: 1,
+      })
+    }
+  } catch (err) {
+    // If source extraction fails, return empty sources and fall through
+    // The aggregated price can still be returned
+  }
+
+  return sources
 }
 
 export async function registerRESTRoutes(app: FastifyInstance) {
@@ -67,14 +118,28 @@ export async function registerRESTRoutes(app: FastifyInstance) {
         } catch { /* fall through */ }
       }
 
-      const agg = await getAggregatedPrice(pair.pairKey)
-      const route = await getBestRoute(pair.assetA, pair.assetB, pair.pairKey, 1000)
+      const [agg, route, sources] = await Promise.all([
+        getAggregatedPrice(pair.pairKey),
+        getBestRoute(pair.assetA, pair.assetB, pair.pairKey, 1000),
+        extractSourcePrices(pair.pairKey),
+      ])
+
+      const medianResult = getMedianPrice(sources, {
+        freshnessThresholdMs: 60_000,
+        minFreshSources: 2,
+        fallbackChain: [['SDEX', 'AMM']],
+      })
+
       const result = {
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
         pairKey: pair.pairKey,
         ...agg,
         bestRoute: route.route,
+        medianPrice: medianResult.median,
+        medianPriceSources: medianResult.includedSources,
+        excludedSources: medianResult.excludedSources,
+        medianFallbackEngaged: medianResult.fallbackEngaged,
         lastUpdated: new Date().toISOString(),
       }
 

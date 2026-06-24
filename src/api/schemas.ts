@@ -79,6 +79,21 @@ export const priceResponseSchema = {
     stale: { type: 'boolean' },
     bestRoute: { type: 'string', enum: ['SDEX', 'AMM', 'SPLIT', 'UNKNOWN'] },
     lastUpdated: { type: 'string' },
+    medianPrice: { type: ['number', 'null'] },
+    medianPriceSources: { type: 'array', items: { type: 'string' } },
+    excludedSources: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'reason'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          reason: { type: 'string', enum: ['stale', 'missing'] },
+        },
+      },
+    },
+    medianFallbackEngaged: { type: 'boolean' },
   },
 } as const
 
