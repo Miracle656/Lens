@@ -11,6 +11,7 @@ const GATED_ROUTES: Record<string, { price: string; description: string }> = {
   '/price': { price: '$0.10', description: 'Unified SDEX+AMM price with VWAP and best route' },
   '/pools': { price: '$0.05', description: 'AMM liquidity pool reserves and spot prices' },
   '/candles': { price: '$0.05', description: 'OHLCV candle data for trading charts' },
+  '/graphql': { price: '$0.10', description: 'GraphQL queries for price data and market information' },
 }
 
 /**
@@ -36,10 +37,12 @@ async function x402Plugin(app: FastifyInstance) {
   app.log.info('[oracle] x402 payment gating enabled')
 
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
-    // Only gate GET requests on matching path prefixes
-    const matchedRoute = Object.keys(GATED_ROUTES).find(prefix =>
-      req.url.startsWith(prefix) && req.method === 'GET'
-    )
+    // Gate GET requests on matching path prefixes, or POST requests to /graphql
+    const matchedRoute = Object.keys(GATED_ROUTES).find(prefix => {
+      const pathMatches = req.url.startsWith(prefix)
+      const methodAllowed = prefix === '/graphql' ? req.method === 'POST' : req.method === 'GET'
+      return pathMatches && methodAllowed
+    })
     if (!matchedRoute) return
 
     const { price, description } = GATED_ROUTES[matchedRoute]

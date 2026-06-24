@@ -57,6 +57,7 @@ async function buildApp() {
   app.get('/price/test', async () => ({ ok: true }))
   app.get('/pools/test', async () => ({ ok: true }))
   app.get('/candles/test', async () => ({ ok: true }))
+  app.post('/graphql', async () => ({ ok: true }))
   app.get('/public', async () => ({ ok: true }))
   await app.ready()
   return app
@@ -171,5 +172,45 @@ describe('x402 middleware', () => {
 
     await new Promise(r => setTimeout(r, 20))
     expect(mockSettle).toHaveBeenCalledOnce()
+  })
+
+  it('gates POST requests to /graphql with $0.10 price requirement', async () => {
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/graphql',
+      payload: { query: '{ test }' },
+    })
+
+    expect(res.statusCode).toBe(402)
+    expect(res.json().accepts[0]).toHaveProperty('price', '$0.10')
+  })
+
+  it('allows POST to /graphql with valid payment header', async () => {
+    mockVerify.mockResolvedValue({ isValid: true })
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/graphql',
+      payload: { query: '{ test }' },
+      headers: { 'x-payment': makePaymentHeader() },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(mockVerify).toHaveBeenCalledOnce()
+  })
+
+  it('does not gate GET requests to /graphql', async () => {
+    const app = await buildApp()
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/graphql',
+    })
+
+    expect(res.statusCode).toBe(404)
+    expect(mockVerify).not.toHaveBeenCalled()
   })
 })
