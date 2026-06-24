@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import Fastify from 'fastify'
 import Ajv from 'ajv'
+import Fastify from 'fastify'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { mockQuery, mockGetCachedPrice, mockGetBestRoute, mockGetAggregatedPrice } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
@@ -78,6 +78,11 @@ describe('REST response schema validation', () => {
 
   it('returns 200 and a body that matches the declared /price schema', async () => {
     mockGetAggregatedPrice.mockResolvedValue(validAggregate())
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('price::numeric') && sql.includes('FROM price_points') && sql.includes('SDEX')) return { rows: [{ price: '0.1', timestamp: new Date().toISOString() }] }
+      if (sql.includes('AVG(ps.spot_price::numeric)')) return { rows: [{ spot_price: '0.1', timestamp: new Date().toISOString() }] }
+      return { rows: [] }
+    })
 
     const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/price/XLM/USDC' })
