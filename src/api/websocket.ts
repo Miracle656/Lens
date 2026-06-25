@@ -5,6 +5,8 @@ import { priceEmitter, PRICE_UPDATE, PriceUpdateEvent } from '../events'
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
 // @ts-ignore
 import { ExactStellarScheme } from '@x402/stellar/exact/server'
+import { fanOutManager } from '../ws/fanout'
+import { v4 as uuid } from 'uuid'
 
 const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
 const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
@@ -74,17 +76,23 @@ export async function registerWebSocket(app: FastifyInstance) {
     app.log.info('[ws] Connection authorized')
     socket.send(JSON.stringify({ type: 'status', message: 'Streaming active' }))
 
-    const onPriceUpdate = (event: PriceUpdateEvent) => {
-      if (socket.readyState === 1) { // OPEN
-        socket.send(JSON.stringify({ type: 'price_update', ...event }))
-      }
-    }
-
-    priceEmitter.on(PRICE_UPDATE, onPriceUpdate)
+    // Register with fan-out manager for backpressure-aware broadcasting
+    const clientId = uuid()
+    const unsubscribe = fanOutManager.register('*', {
+      id: clientId,
+      send: (data: string) => {
+        if (socket.readyState === 1) { // OPEN
+          socket.send(data)
+        }
+      },
+      close: () => {
+        socket.close()
+      },
+    })
 
     socket.on('close', () => {
       app.log.info('[ws] Connection closed')
-      priceEmitter.off(PRICE_UPDATE, onPriceUpdate)
+      unsubscribe()
     })
   }
 }
