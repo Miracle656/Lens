@@ -22,6 +22,8 @@ import { registerX402 } from './middleware/x402'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
+import { registerPriceRoutes } from './routes/price'
+import { fanOutManager } from './ws/fanout'
 
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
@@ -107,6 +109,7 @@ async function main() {
   await registerPairsRoutes(app)
   await registerScreenerRoutes(app)
   await registerHistoryRoutes(app)
+  await registerPriceRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
@@ -119,6 +122,14 @@ async function main() {
   await app.listen({ port: config.api.port, host: config.api.host })
   console.log(`[lens] API listening on http://${config.api.host}:${config.api.port}`)
   console.log(`[lens] GraphiQL at http://localhost:${config.api.port}/graphiql`)
+
+  // ── WebSocket fan-out (non-blocking — requires Redis for multi-instance) ─
+  try {
+    await fanOutManager.initialize()
+    console.log('[lens] WebSocket fan-out manager initialized')
+  } catch (err) {
+    console.warn('[lens] WebSocket fan-out init skipped:', (err as Error).message)
+  }
 
   // ── Aggregate refresh worker (non-blocking — requires Redis) ─────────────
   try {
