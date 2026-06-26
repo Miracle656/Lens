@@ -22,6 +22,7 @@ import { registerX402 } from './middleware/x402'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
+import { registerUsageRoutes } from './api/usage'
 import { registerPriceRoutes } from './routes/price'
 import { fanOutManager } from './ws/fanout'
 
@@ -100,9 +101,10 @@ async function main() {
 
   // Admin endpoints (key issuance/revocation) — gated by ADMIN_TOKEN. Marked
   // `config.public` so the API-key auth hook skips them.
-  await registerAdminRoutes(app)
+   await registerAdminRoutes(app)
+   await registerUsageRoutes(app)
 
-  await app.register(registerX402)
+   await app.register(registerX402)
   await registerRESTRoutes(app)
   await registerWebhookRoutes(app)
   await registerCandleRoutes(app)
