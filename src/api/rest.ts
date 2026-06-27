@@ -11,8 +11,10 @@ import {
   routeResponseSchema,
   historyResponseSchema,
   poolsResponseSchema,
+  depthResponseSchema,
   installResponseValidation,
 } from './schemas'
+import { getDepth } from '../pricing/depth'
 
 function makePairKey(a: string, b: string): string {
   return [a, b].sort().join('/')
@@ -159,4 +161,30 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     )
     return { pools: result.rows }
   })
+
+  // GET /price/:assetA/:assetB/depth?amount=1000
+  app.get<{
+    Params: { assetA: string; assetB: string }
+    Querystring: { amount?: string }
+  }>(
+    '/price/:assetA/:assetB/depth',
+    { schema: { response: { 200: depthResponseSchema } } },
+    async (req, reply) => {
+      const { assetA, assetB } = req.params
+      const amount = parseFloat(req.query.amount ?? '1000')
+      const pair = findPair(assetA, assetB)
+      
+      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched` })
+      if (isNaN(amount) || amount <= 0) return reply.status(400).send({ error: 'amount must be a positive number' })
+
+      const depthResult = await getDepth(pair.pairKey, amount)
+      
+      return {
+        assetA: pair.assetA.code,
+        assetB: pair.assetB.code,
+        pairKey: pair.pairKey,
+        ...depthResult
+      }
+    }
+  )
 }
