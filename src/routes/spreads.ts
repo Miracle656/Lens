@@ -3,9 +3,9 @@ import { pgPool } from '../db';
 
 /**
  * GET /spreads/:asset - Return current bid, ask, and spread (bps) for the given asset.
- * The bid is taken as the highest price among price points where the asset appears.
- * The ask is the lowest price among those points.
- * Spread basis points = ((ask - bid) / ask) * 10_000.
+ * The bid is the minimum price among price points where the asset appears.
+ * The ask is the maximum price among those points.
+ * Spread basis points = ((ask - bid) / ask) * 10_000 (non‑negative).
  */
 export async function registerSpreadsRoutes(app: FastifyInstance) {
   app.get('/spreads/:asset', async (req, reply) => {
@@ -15,9 +15,9 @@ export async function registerSpreadsRoutes(app: FastifyInstance) {
     }
 
     const result = await pgPool.query(
-      `SELECT MAX(price::numeric) AS bid, MIN(price::numeric) AS ask
-       FROM price_points
-       WHERE assetA = $1 OR assetB = $1`,
+      `SELECT MIN(price::numeric) AS bid, MAX(price::numeric) AS ask
+        FROM price_points
+        WHERE "asset_a" = $1 OR "asset_b" = $1`,
       [asset]
     );
     const row = result.rows[0];
