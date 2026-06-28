@@ -23,6 +23,7 @@ import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
 import { registerPriceRoutes } from './routes/price'
+import { registerVolumeRoutes } from './routes/volumes'
 import { fanOutManager } from './ws/fanout'
 
 import { startSDEXIngester } from './ingesters/sdex'
@@ -110,6 +111,7 @@ async function main() {
   await registerScreenerRoutes(app)
   await registerHistoryRoutes(app)
   await registerPriceRoutes(app)
+  await registerVolumeRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
