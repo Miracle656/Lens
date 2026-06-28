@@ -24,6 +24,7 @@ import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
 import { registerPriceRoutes } from './routes/price'
 import { registerVolumeRoutes } from './routes/volumes'
+import { registerBenchmarkRoutes } from './routes/benchmark'
 import { fanOutManager } from './ws/fanout'
 
 import { startSDEXIngester } from './ingesters/sdex'
@@ -112,6 +113,7 @@ async function main() {
   await registerHistoryRoutes(app)
   await registerPriceRoutes(app)
   await registerVolumeRoutes(app)
+  await registerBenchmarkRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
