@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { x402_payments_received_total } from '../metrics'
+import { checkQuota, recordUsage, parseCents, getQuotaConfig } from '../x402/metering'
 import fp from 'fastify-plugin'
 // @ts-ignore — @x402 packages ship ESM-only types incompatible with commonjs moduleResolution
 import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
@@ -83,6 +84,34 @@ async function x402Plugin(app: FastifyInstance) {
 
       // Valid — increment metric
       x402_payments_received_total.inc()
+
+      // Valid — enforce quota if the request carries an API key
+      const apiKeyId = (req as any).apiKey?.id as string | undefined
+      if (apiKeyId) {
+        const quotaOk = await checkQuota(apiKeyId)
+        if (!quotaOk.allowed) {
+          const config = await getQuotaConfig(apiKeyId)
+          if (config.overagePolicy === 'allow_overage') {
+            // Record usage and let through (overage billing applies)
+            await recordUsage(apiKeyId, parseCents(price))
+          } else if (config.overagePolicy === 'charge_402') {
+            reply.status(402).send({
+              error: 'Quota exceeded — additional payment required',
+              policy: 'charge_402',
+            })
+            return
+          } else {
+            // default: block
+            reply.status(402).send({
+              error: 'Quota exceeded',
+              policy: 'block',
+            })
+            return
+          }
+        } else {
+          await recordUsage(apiKeyId, parseCents(price))
+        }
+      }
 
       // Valid — settle asynchronously and let the request through
       resourceServer.settle(payload, requirements).catch((err: unknown) => {
