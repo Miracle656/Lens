@@ -177,6 +177,45 @@ export const poolsResponseSchema = {
   },
 } as const
 
+export const depthResponseSchema = {
+  type: 'object',
+  required: ['assetA', 'assetB', 'pairKey', 'spotPrice', 'executionPrice', 'slippagePct', 'asks', 'bids', 'source'],
+  additionalProperties: false,
+  properties: {
+    assetA: { type: 'string' },
+    assetB: { type: 'string' },
+    pairKey: { type: 'string' },
+    spotPrice: { type: 'number' },
+    executionPrice: { type: 'number' },
+    slippagePct: { type: 'number' },
+    asks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['price', 'size'],
+        additionalProperties: false,
+        properties: {
+          price: { type: 'number' },
+          size: { type: 'number' },
+        },
+      },
+    },
+    bids: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['price', 'size'],
+        additionalProperties: false,
+        properties: {
+          price: { type: 'number' },
+          size: { type: 'number' },
+        },
+      },
+    },
+    source: { type: 'string', enum: ['AMM', 'SDEX', 'BOTH'] },
+  },
+} as const
+
 /**
  * Install response-shape validation on a Fastify instance.
  *

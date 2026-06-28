@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 import Ajv from 'ajv'
 
-const { mockQuery, mockGetCachedPrice, mockGetBestRoute, mockGetAggregatedPrice } = vi.hoisted(() => ({
+const { mockQuery, mockGetCachedPrice, mockGetBestRoute, mockGetAggregatedPrice, mockGetDepth } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGetCachedPrice: vi.fn(),
   mockGetBestRoute: vi.fn(),
   mockGetAggregatedPrice: vi.fn(),
+  mockGetDepth: vi.fn(),
 }))
 
 vi.mock('../db', () => ({
@@ -24,6 +25,10 @@ vi.mock('../aggregator/bestRoute', () => ({
 
 vi.mock('../aggregator/vwap', () => ({
   getAggregatedPrice: mockGetAggregatedPrice,
+}))
+
+vi.mock('../pricing/depth', () => ({
+  getDepth: mockGetDepth,
 }))
 
 vi.mock('../config', () => ({
@@ -66,6 +71,8 @@ function validAggregate() {
     sources: 2,
     confidence: 'high' as const,
     lastTradeAgeSeconds: 10,
+    stale: false,
+    bestRoute: 'SDEX' as const,
   }
 }
 
@@ -74,6 +81,14 @@ describe('REST response schema validation', () => {
     vi.clearAllMocks()
     mockGetCachedPrice.mockResolvedValue(null)
     mockGetBestRoute.mockResolvedValue({ route: 'SDEX' })
+    mockGetDepth.mockResolvedValue({
+      spotPrice: 0.1,
+      executionPrice: 0.099,
+      slippagePct: 1.0,
+      asks: [],
+      bids: [],
+      source: 'AMM',
+    })
   })
 
   it('returns 200 and a body that matches the declared /price schema', async () => {
