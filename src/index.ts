@@ -25,12 +25,14 @@ import { registerAdminRoutes } from './api/admin'
 import { registerUsageRoutes } from './api/usage'
 import { registerPriceRoutes } from './routes/price'
 import { registerVolumeRoutes } from './routes/volumes'
+import { registerOracleRoutes } from './routes/oracle'
 import { fanOutManager } from './ws/fanout'
 
 import { startSDEXIngester } from './ingesters/sdex'
 import { startAMMIngester } from './ingesters/amm'
 import { startSoroswapIngester } from './ingesters/soroswap'
 import { startSnapshotIngester } from './ingesters/snapshot'
+import { startAquariusIngester } from './ingest/venues/aquarius'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
 import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
@@ -114,6 +116,7 @@ async function main() {
   await registerHistoryRoutes(app)
   await registerPriceRoutes(app)
   await registerVolumeRoutes(app)
+  await registerOracleRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
@@ -169,6 +172,7 @@ async function main() {
   restartIngester('AMM', startAMMIngester)
   restartIngester('Soroswap', startSoroswapIngester)
   restartIngester('Snapshot', startSnapshotIngester)
+  restartIngester('Aquarius', startAquariusIngester)
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
