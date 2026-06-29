@@ -165,6 +165,8 @@ The API specification is available in [OpenAPI 3.0 format](openapi.yaml) and is 
 
 The [oracle relay example](examples/oracle-relay/README.md) shows a minimal Soroban contract plus a Node relay that reads Lens prices and pushes them on chain.
 
+The [price alert bot example](examples/alert-bot/README.md) shows an "if XLM > X notify me" bot built on the WebSocket price stream — see the [cookbook walkthrough](docs/cookbook/alert-bot.md).
+
 ## Docker Quickstart
 The fastest way to get Lens running locally is with Docker:
 
