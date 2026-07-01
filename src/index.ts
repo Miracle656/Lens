@@ -105,10 +105,10 @@ async function main() {
 
   // Admin endpoints (key issuance/revocation) — gated by ADMIN_TOKEN. Marked
   // `config.public` so the API-key auth hook skips them.
-   await registerAdminRoutes(app)
-   await registerUsageRoutes(app)
+  await registerAdminRoutes(app)
+  await registerUsageRoutes(app)
 
-   await app.register(registerX402)
+  await app.register(registerX402)
   await registerRESTRoutes(app)
   await registerWebhookRoutes(app)
   await registerCandleRoutes(app)
