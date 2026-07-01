@@ -216,6 +216,38 @@ export const depthResponseSchema = {
   },
 } as const
 
+/** GET /benchmark/:asset */
+export const benchmarkResponseSchema = {
+  type: 'object',
+  required: ['asset', 'target', 'pairKey', 'currentPrice', 'currentDeviationBp', 'rolling24h'],
+  additionalProperties: false,
+  properties: {
+    asset: { type: 'string' },
+    target: { type: 'string' },
+    pairKey: { type: 'string' },
+    currentPrice: { type: ['number', 'null'] },
+    currentDeviationBp: { type: ['number', 'null'] },
+    rolling24h: {
+      type: 'object',
+      required: [
+        'maxDeviationBp',
+        'minDeviationBp',
+        'maxAbsoluteDeviationBp',
+        'averageDeviationBp',
+        'sampleCount',
+      ],
+      additionalProperties: false,
+      properties: {
+        maxDeviationBp: { type: ['number', 'null'] },
+        minDeviationBp: { type: ['number', 'null'] },
+        maxAbsoluteDeviationBp: { type: ['number', 'null'] },
+        averageDeviationBp: { type: ['number', 'null'] },
+        sampleCount: { type: 'integer' },
+      },
+    },
+  },
+} as const
+
 /**
  * Install response-shape validation on a Fastify instance.
  *
