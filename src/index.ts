@@ -26,6 +26,7 @@ import { registerUsageRoutes } from './api/usage'
 import { registerPriceRoutes } from './routes/price'
 import { registerVolumeRoutes } from './routes/volumes'
 import { registerOracleRoutes } from './routes/oracle'
+import { registerBasketRoutes } from './routes/basket'
 import { fanOutManager } from './ws/fanout'
 
 import { startSDEXIngester } from './ingesters/sdex'
@@ -117,6 +118,7 @@ async function main() {
   await registerPriceRoutes(app)
   await registerVolumeRoutes(app)
   await registerOracleRoutes(app)
+  await registerBasketRoutes(app)
   await registerGraphQL(app)
   await registerWebSocket(app)
 
