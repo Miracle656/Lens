@@ -43,7 +43,7 @@ Dependencies: **#113 → #115 → #116 → #117**; #114 before the network selec
 | [#116](../../issues/116) | Per-network Soroswap/Reflector/Aquarius/token-list | #113 |
 | [#117](../../issues/117) | Launch ingesters per network | #113–#116 |
 | [#118](../../issues/118) | Network selector on routes + per-request x402 | #114 |
-| [#119](../../issues/119) | Nightly `pg_dump` backup + restore runbook | — |
+| [#119](../../issues/119) | Nightly `pg_dump` backup + [restore runbook](backup-restore.md) | — |
 | [#120](../../issues/120) | Mainnet deploy guide | the rest |
 
 ## Ops (Render + UptimeRobot + external Postgres)
@@ -53,5 +53,6 @@ Dependencies: **#113 → #115 → #116 → #117**; #114 before the network selec
   mainnet always-on, testnet on-demand / a second account / a paid instance.
 - **Database:** use Neon or another managed Postgres. **Do not** use Render's
   free Postgres — it is **deleted after 90 days**. One DB per network.
-- **Durability fallback:** nightly `pg_dump` (#119) for fast restore; Lens is an
-  aggregator, so the DB is also re-derivable by re-ingesting from chain.
+- **Durability fallback:** nightly `pg_dump` (#119) for fast restore; see
+  [backup-restore.md](backup-restore.md). Lens is an aggregator, so the DB is
+  also re-derivable by re-ingesting from chain.

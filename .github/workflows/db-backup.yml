@@ -1,0 +1,62 @@
+name: Nightly DB backup
+
+# Logical dumps of the per-network Postgres (Neon/direct URL). Price history is
+# re-derivable from chain, but a nightly custom-format dump is the fast restore
+# path. See docs/backup-restore.md.
+on:
+  schedule:
+    # 03:00 UTC — one hour before the load test (04:00), so dump I/O and the
+    # 5k-RPS flood do not overlap.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  dump:
+    name: pg_dump (${{ matrix.network }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        network: [mainnet, testnet]
+    env:
+      DATABASE_URL_MAINNET: ${{ secrets.DATABASE_URL_MAINNET }}
+      DATABASE_URL_TESTNET: ${{ secrets.DATABASE_URL_TESTNET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Dump ${{ matrix.network }}
+        env:
+          NETWORK: ${{ matrix.network }}
+        run: |
+          set -euo pipefail
+          if [ "$NETWORK" = "mainnet" ]; then
+            DATABASE_URL="${DATABASE_URL_MAINNET:-}"
+          else
+            DATABASE_URL="${DATABASE_URL_TESTNET:-}"
+          fi
+          if [ -z "$DATABASE_URL" ]; then
+            echo "SKIP ${NETWORK}: secret not configured"
+            exit 0
+          fi
+          DATE_UTC=$(date -u +%Y%m%d)
+          OUT="lens-${NETWORK}-${DATE_UTC}.dump"
+          pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" --file="$OUT"
+          gzip -n "$OUT"
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: lens-${{ matrix.network }}-${{ github.run_id }}
+          path: lens-${{ matrix.network }}-*.dump.gz
+          retention-days: 14
+          if-no-files-found: ignore
