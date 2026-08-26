@@ -1,8 +1,8 @@
 name: Nightly DB backup
 
-# Logical dumps of the per-network Postgres (Neon/direct URL). Price history is
-# re-derivable from chain, but a nightly custom-format dump is the fast restore
-# path. See docs/backup-restore.md.
+# Logical dumps of the per-network Postgres (Neon/direct URL). This repo is
+# public, so Actions artifacts are world-readable — only age ciphertext is
+# uploaded. See docs/backup-restore.md.
 on:
   schedule:
     # 03:00 UTC — one hour before the load test (04:00), so dump I/O and the
@@ -28,11 +28,12 @@ jobs:
     env:
       DATABASE_URL_MAINNET: ${{ secrets.DATABASE_URL_MAINNET }}
       DATABASE_URL_TESTNET: ${{ secrets.DATABASE_URL_TESTNET }}
+      AGE_RECIPIENT: ${{ secrets.AGE_RECIPIENT }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install postgresql-client and age
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client age
 
       - name: Dump ${{ matrix.network }}
         env:
@@ -48,15 +49,21 @@ jobs:
             echo "SKIP ${NETWORK}: secret not configured"
             exit 0
           fi
+          if [ -z "${AGE_RECIPIENT:-}" ]; then
+            echo "AGE_RECIPIENT is required; refusing an unencrypted dump"
+            exit 1
+          fi
           DATE_UTC=$(date -u +%Y%m%d)
           OUT="lens-${NETWORK}-${DATE_UTC}.dump"
           pg_dump --format=custom --no-owner --no-acl --dbname="$DATABASE_URL" --file="$OUT"
           gzip -n "$OUT"
+          age -r "$AGE_RECIPIENT" -o "${OUT}.gz.age" "${OUT}.gz"
+          rm -f "$OUT" "${OUT}.gz"
 
       - uses: actions/upload-artifact@v4
         if: success()
         with:
           name: lens-${{ matrix.network }}-${{ github.run_id }}
-          path: lens-${{ matrix.network }}-*.dump.gz
+          path: lens-${{ matrix.network }}-*.dump.gz.age
           retention-days: 14
           if-no-files-found: ignore

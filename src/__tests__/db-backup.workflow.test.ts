@@ -55,6 +55,16 @@ describe('nightly pg_dump workflow', () => {
     expect(raw).not.toMatch(/echo\s+"?\$\{?DATABASE_URL/)
     expect(raw).not.toMatch(/set\s+-x/)
   })
+
+  it('age-encrypts before upload and refuses a missing recipient', () => {
+    const raw = read(workflowPath)
+    expect(raw).toMatch(/secrets\.AGE_RECIPIENT/)
+    expect(raw).toMatch(/\bage -r\b/)
+    expect(raw).toMatch(/\.dump\.gz\.age/)
+    expect(raw).toMatch(/AGE_RECIPIENT is required|refusing.*unencrypted/i)
+    expect(raw).toMatch(/path:\s*lens-\$\{\{\s*matrix\.network\s*\}\}-\*\.dump\.gz\.age/)
+    expect(raw).not.toMatch(/path:\s*lens-\$\{\{\s*matrix\.network\s*\}\}-\*\.dump\.gz\s*$/m)
+  })
 })
 
 describe('backup restore runbook', () => {
@@ -68,5 +78,13 @@ describe('backup restore runbook', () => {
     expect(raw).toMatch(/testnet/i)
     expect(raw).toMatch(/pooler|direct/i)
     expect(raw).toMatch(/fresh/i)
+  })
+
+  it('says dumps hold credentials and must be decrypted off the public artifact', () => {
+    const raw = read(runbookPath)
+    expect(raw).toMatch(/webhooks?\.secret|HMAC/i)
+    expect(raw).toMatch(/world-readable|public/i)
+    expect(raw).toMatch(/age -d/)
+    expect(raw).toMatch(/AGE_RECIPIENT/)
   })
 })
