@@ -28,9 +28,6 @@ import type { WatchedPair } from '../types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SOROSWAP_TOKEN_LIST_URL =
-  'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
-
 // Ephemeral fee-payer account (no real funds needed for simulation)
 const FEE_PAYER_KEYPAIR = Keypair.random()
 
@@ -62,9 +59,11 @@ export interface PoolEntry {
  * Fetch Soroswap token list. Returns an empty array on failure so the ingester
  * degrades gracefully without affecting other ingesters.
  */
-export async function fetchSoroswapTokenList(): Promise<SoroswapToken[]> {
+export async function fetchSoroswapTokenList(
+  tokenListUrl: string = getNetworkConfig(activeNetwork).soroswap.tokenListUrl
+): Promise<SoroswapToken[]> {
   try {
-    const res = await fetch(SOROSWAP_TOKEN_LIST_URL)
+    const res = await fetch(tokenListUrl)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = (await res.json()) as SoroswapTokenList
     return Array.isArray(data.tokens) ? data.tokens : []
@@ -331,7 +330,14 @@ async function sleep(ms: number): Promise<void> {
  */
 export async function startSoroswapIngester(network: NetworkName = activeNetwork): Promise<void> {
   const netConfig = getNetworkConfig(network)
+
+  if (!netConfig.soroswap.enabled) {
+    console.log(`[soroswap] Soroswap is disabled on ${network} — ingester not started`)
+    return
+  }
+
   const factoryAddress = netConfig.soroswap.factoryAddress
+  const tokenListUrl = netConfig.soroswap.tokenListUrl
   const pollInterval = netConfig.soroswap.pollIntervalMs
 
   console.log(
@@ -340,7 +346,7 @@ export async function startSoroswapIngester(network: NetworkName = activeNetwork
 
   while (true) {
     const pairs = getActivePairs()
-    const tokens = await fetchSoroswapTokenList()
+    const tokens = await fetchSoroswapTokenList(tokenListUrl)
 
     if (tokens.length === 0) {
       console.warn('[soroswap] Token list empty — skipping poll cycle')

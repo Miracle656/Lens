@@ -39,7 +39,7 @@ export async function fetchReflectorPrice(
   network: NetworkName = activeNetwork
 ): Promise<ReflectorPrice | null> {
   const netConfig = getNetworkConfig(network)
-  if (!netConfig.oracle.reflectorContractId) return null
+  if (!netConfig.oracle.enabled || !netConfig.oracle.reflectorContractId) return null
 
   try {
     const rpc = getRpcServer(network)
