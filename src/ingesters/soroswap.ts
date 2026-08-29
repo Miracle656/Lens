@@ -19,16 +19,14 @@ import {
   scValToNative,
   Account,
 } from '@stellar/stellar-sdk'
-import { config } from '../config'
+import { activeNetwork, getNetworkConfig, type NetworkName } from '../config'
+import { getRpcServer } from '../network/clients'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-const SOROSWAP_TOKEN_LIST_URL =
-  'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
 
 // Ephemeral fee-payer account (no real funds needed for simulation)
 const FEE_PAYER_KEYPAIR = Keypair.random()
@@ -55,25 +53,17 @@ export interface PoolEntry {
   tokenB: SoroswapToken
 }
 
-// ── RPC client (lazy-initialised so tests can skip it) ────────────────────────
-
-let _rpc: SorobanRpc.Server | null = null
-function getRpc(): SorobanRpc.Server {
-  if (!_rpc) {
-    _rpc = new SorobanRpc.Server(config.rpc.url, { allowHttp: true })
-  }
-  return _rpc
-}
-
 // ── Token-list helpers ────────────────────────────────────────────────────────
 
 /**
  * Fetch Soroswap token list. Returns an empty array on failure so the ingester
  * degrades gracefully without affecting other ingesters.
  */
-export async function fetchSoroswapTokenList(): Promise<SoroswapToken[]> {
+export async function fetchSoroswapTokenList(
+  tokenListUrl: string = getNetworkConfig(activeNetwork).soroswap.tokenListUrl
+): Promise<SoroswapToken[]> {
   try {
-    const res = await fetch(SOROSWAP_TOKEN_LIST_URL)
+    const res = await fetch(tokenListUrl)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = (await res.json()) as SoroswapTokenList
     return Array.isArray(data.tokens) ? data.tokens : []
@@ -92,14 +82,15 @@ export async function fetchSoroswapTokenList(): Promise<SoroswapToken[]> {
 export async function fetchPoolsFromFactory(
   factoryAddress: string,
   tokenA: string,
-  tokenB: string
+  tokenB: string,
+  network: NetworkName = activeNetwork
 ): Promise<string[]> {
   try {
-    const rpc = getRpc()
+    const rpc = getRpcServer(network)
     const factory = new Contract(factoryAddress)
     const account = new Account(FEE_PAYER_KEYPAIR.publicKey(), '0')
     const networkPassphrase =
-      config.network.passphrase ?? Networks.PUBLIC
+      getNetworkConfig(network).network.passphrase ?? Networks.PUBLIC
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -146,14 +137,15 @@ export async function fetchPoolsFromFactory(
  * Returns null on any RPC error.
  */
 export async function fetchPoolReserves(
-  poolAddress: string
+  poolAddress: string,
+  network: NetworkName = activeNetwork
 ): Promise<[bigint, bigint] | null> {
   try {
-    const rpc = getRpc()
+    const rpc = getRpcServer(network)
     const pool = new Contract(poolAddress)
     const account = new Account(FEE_PAYER_KEYPAIR.publicKey(), '0')
     const networkPassphrase =
-      config.network.passphrase ?? Networks.PUBLIC
+      getNetworkConfig(network).network.passphrase ?? Networks.PUBLIC
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
@@ -212,10 +204,11 @@ export function calcSpotPrice(reserveA: bigint, reserveB: bigint): number {
 export async function ingestPool(
   poolEntry: PoolEntry,
   pair: WatchedPair,
-  _fetchReserves = fetchPoolReserves
+  _fetchReserves: (poolAddress: string, network?: NetworkName) => Promise<[bigint, bigint] | null> = fetchPoolReserves,
+  network: NetworkName = activeNetwork
 ): Promise<void> {
   try {
-    const reserves = await _fetchReserves(poolEntry.poolAddress)
+    const reserves = await _fetchReserves(poolEntry.poolAddress, network)
     if (!reserves) return
 
     const [reserveA, reserveB] = reserves
@@ -277,7 +270,13 @@ export async function ingestPair(
   pair: WatchedPair,
   tokens: SoroswapToken[],
   factoryAddress: string,
-  _fetchPools = fetchPoolsFromFactory
+  _fetchPools: (
+    factoryAddress: string,
+    tokenA: string,
+    tokenB: string,
+    network?: NetworkName
+  ) => Promise<string[]> = fetchPoolsFromFactory,
+  network: NetworkName = activeNetwork
 ): Promise<void> {
   const tokenA = tokens.find(
     (t) => t.symbol.toUpperCase() === pair.assetA.code.toUpperCase()
@@ -296,7 +295,8 @@ export async function ingestPair(
   const poolAddresses = await _fetchPools(
     factoryAddress,
     tokenA.address,
-    tokenB.address
+    tokenB.address,
+    network
   )
 
   if (!poolAddresses.length) {
@@ -310,7 +310,9 @@ export async function ingestPair(
     poolAddresses.map((addr) =>
       ingestPool(
         { poolAddress: addr, tokenA, tokenB },
-        pair
+        pair,
+        fetchPoolReserves,
+        network
       )
     )
   )
@@ -326,23 +328,31 @@ async function sleep(ms: number): Promise<void> {
  * Start the Soroswap AMM ingester. Runs as an infinite polling loop.
  * Fault-isolated: a crash is caught by the caller (restartIngester in index.ts).
  */
-export async function startSoroswapIngester(): Promise<void> {
-  const factoryAddress = config.soroswap.factoryAddress
-  const pollInterval = config.soroswap.pollIntervalMs
+export async function startSoroswapIngester(network: NetworkName = activeNetwork): Promise<void> {
+  const netConfig = getNetworkConfig(network)
+
+  if (!netConfig.soroswap.enabled) {
+    console.log(`[soroswap] Soroswap is disabled on ${network} — ingester not started`)
+    return
+  }
+
+  const factoryAddress = netConfig.soroswap.factoryAddress
+  const tokenListUrl = netConfig.soroswap.tokenListUrl
+  const pollInterval = netConfig.soroswap.pollIntervalMs
 
   console.log(
-    `[soroswap] Starting Soroswap ingester | factory=${factoryAddress} | interval=${pollInterval}ms`
+    `[soroswap] Starting Soroswap ingester on ${network} | factory=${factoryAddress} | interval=${pollInterval}ms`
   )
 
   while (true) {
     const pairs = getActivePairs()
-    const tokens = await fetchSoroswapTokenList()
+    const tokens = await fetchSoroswapTokenList(tokenListUrl)
 
     if (tokens.length === 0) {
       console.warn('[soroswap] Token list empty — skipping poll cycle')
     } else {
       await Promise.all(
-        pairs.map((pair) => ingestPair(pair, tokens, factoryAddress))
+        pairs.map((pair) => ingestPair(pair, tokens, factoryAddress, fetchPoolsFromFactory, network))
       )
     }
 

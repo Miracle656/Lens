@@ -1,9 +1,8 @@
-import { Horizon, Asset } from '@stellar/stellar-sdk'
-import { config } from '../config'
+import { Asset } from '@stellar/stellar-sdk'
+import { activeNetwork, type NetworkName } from '../config'
+import { getHorizonServer } from '../network/clients'
 import type { AssetId, RouteInfo } from '../types'
 import { pgPool } from '../db'
-
-const horizonServer = new Horizon.Server(config.horizon.url)
 
 function assetIdToStellar(asset: AssetId) {
   if (!asset.issuer) return Asset.native()
@@ -36,11 +35,16 @@ async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
   return output / amount  // price per unit
 }
 
-async function getSDEXPrice(assetA: AssetId, assetB: AssetId, amount: number): Promise<number> {
+async function getSDEXPrice(
+  assetA: AssetId,
+  assetB: AssetId,
+  amount: number,
+  network: NetworkName
+): Promise<number> {
   try {
     const stellarAssetA = assetIdToStellar(assetA)
     const stellarAssetB = assetIdToStellar(assetB)
-    const paths = await horizonServer
+    const paths = await getHorizonServer(network)
       .strictSendPaths(stellarAssetA, amount.toString(), [stellarAssetB])
       .call()
     if (paths.records.length === 0) return 0
@@ -55,10 +59,11 @@ export async function getBestRoute(
   assetA: AssetId,
   assetB: AssetId,
   pairKey: string,
-  amount: number = 1000
+  amount: number = 1000,
+  network: NetworkName = activeNetwork
 ): Promise<RouteInfo> {
   const [sdexPrice, ammPrice] = await Promise.all([
-    getSDEXPrice(assetA, assetB, amount),
+    getSDEXPrice(assetA, assetB, amount, network),
     getAMMPrice(pairKey, amount),
   ])
 

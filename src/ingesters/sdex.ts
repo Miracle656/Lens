@@ -1,12 +1,11 @@
-import { Horizon, Asset } from '@stellar/stellar-sdk'
+import { Asset } from '@stellar/stellar-sdk'
 import { trades_ingested_total, last_trade_timestamp } from '../metrics'
-import { config } from '../config'
+import { config, activeNetwork, type NetworkName } from '../config'
+import { getHorizonServer } from '../network/clients'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
-
-const horizonServer = new Horizon.Server(config.horizon.url)
 
 // Last seen price per pairKey — used for threshold crossing detection
 const lastPrice = new Map<string, number>()
@@ -16,15 +15,15 @@ function toAsset(asset: { code: string; issuer: string | null }): Asset {
   return new Asset(asset.code, asset.issuer)
 }
 
-export async function ingestPair(pair: WatchedPair): Promise<void> {
-  const stateId = `sdex:${pair.pairKey}`
+export async function ingestPair(pair: WatchedPair, network: NetworkName = activeNetwork): Promise<void> {
+  const stateId = `sdex:${network}:${pair.pairKey}`
   const cursor = await getIndexerCursor(stateId) ?? '0'
 
   try {
     const assetA = toAsset(pair.assetA)
     const assetB = toAsset(pair.assetB)
 
-    const trades = await horizonServer
+    const trades = await getHorizonServer(network)
       .trades()
       .forAssetPair(assetA, assetB)
       .cursor(cursor)
@@ -87,11 +86,11 @@ async function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms))
 }
 
-export async function startSDEXIngester(): Promise<void> {
-  console.log(`[sdex] Starting SDEX ingester for ${getActivePairs().length} pairs`)
+export async function startSDEXIngester(network: NetworkName = activeNetwork): Promise<void> {
+  console.log(`[sdex] Starting SDEX ingester for ${getActivePairs().length} pairs on ${network}`)
 
   while (true) {
-    await Promise.all(getActivePairs().map(pair => ingestPair(pair)))
+    await Promise.all(getActivePairs().map(pair => ingestPair(pair, network)))
     await sleep(config.indexer.pollIntervalMs)
   }
 }

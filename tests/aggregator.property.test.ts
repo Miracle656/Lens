@@ -10,9 +10,11 @@ vi.mock('../src/db', () => ({
   },
 }))
 
-vi.mock('@stellar/stellar-sdk', () => {
+vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>()
   const callFn = vi.fn()
   return {
+    ...actual,
     Horizon: {
       Server: vi.fn(function () {
         return {
