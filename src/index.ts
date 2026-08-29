@@ -8,7 +8,7 @@ if (!process.env.DIRECT_DATABASE_URL && process.env.DATABASE_URL) {
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
-import { config } from './config'
+import { config, activeNetwork, type NetworkName } from './config'
 import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
@@ -39,6 +39,7 @@ import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } 
 import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 import { getMetrics } from './metrics'
+import { getEnabledNetworks } from './network/enabledNetworks'
 
 async function main() {
   // ── Ensure DB schema is up-to-date ────────────────────────────────────────
@@ -163,20 +164,30 @@ async function main() {
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
-  // Each ingester is independently fault-isolated via restartIngester.
-  // A crash in the Soroswap ingester cannot take down SDEX or AMM.
-  console.log('[lens] Starting ingesters...')
-  const restartIngester = (name: string, fn: () => Promise<void>) => {
-    fn().catch(err => {
-      console.error(`[lens] ${name} ingester crashed, restarting in 10s:`, err.message)
-      setTimeout(() => restartIngester(name, fn), 10_000)
+  // Each (ingester, network) pair is independently fault-isolated via
+  // restartIngester. A crash in the Soroswap ingester on one network cannot
+  // take down SDEX, AMM, or Soroswap on another network.
+  const enabledNetworks = getEnabledNetworks()
+  console.log(`[lens] Starting ingesters for network(s): ${enabledNetworks.join(', ')}`)
+
+  const restartIngester = (name: string, network: NetworkName, fn: (network: NetworkName) => Promise<void>) => {
+    fn(network).catch(err => {
+      console.error(`[lens] ${name}/${network} ingester crashed, restarting in 10s:`, err.message)
+      setTimeout(() => restartIngester(name, network, fn), 10_000)
     })
   }
-  restartIngester('SDEX', startSDEXIngester)
-  restartIngester('AMM', startAMMIngester)
-  restartIngester('Soroswap', startSoroswapIngester)
-  restartIngester('Snapshot', startSnapshotIngester)
-  restartIngester('Aquarius', startAquariusIngester)
+
+  for (const network of enabledNetworks) {
+    restartIngester('SDEX', network, startSDEXIngester)
+    restartIngester('AMM', network, startAMMIngester)
+    restartIngester('Soroswap', network, startSoroswapIngester)
+    restartIngester('Aquarius', network, startAquariusIngester)
+  }
+
+  // Snapshot ingestion reads from price_points/pool_snapshots in the shared
+  // database rather than a per-network venue client, so one instance covers
+  // every enabled network.
+  restartIngester('Snapshot', activeNetwork, startSnapshotIngester)
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }

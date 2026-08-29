@@ -3,8 +3,17 @@
  */
 
 const mocks = vi.hoisted(() => ({
+  networkConfigs: {
+    testnet: {
+      aquarius: { enabled: false, apiUrl: 'https://amm.aquarius.network/api/v1/pools/' },
+      indexer: { pollIntervalMs: 5000 },
+    },
+    mainnet: {
+      aquarius: { enabled: true, apiUrl: 'https://amm.aquarius.network/api/v1/pools/' },
+      indexer: { pollIntervalMs: 5000 },
+    },
+  },
   config: {
-    aquarius: { enabled: true, apiUrl: 'https://amm.aquarius.network/api/v1/pools/' },
     indexer: { pollIntervalMs: 5000 },
   },
   pairsRegistry: {
@@ -12,7 +21,11 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('../config', () => ({ config: mocks.config }))
+vi.mock('../config', () => ({
+  config: mocks.config,
+  activeNetwork: 'mainnet',
+  getNetworkConfig: (network: 'testnet' | 'mainnet') => mocks.networkConfigs[network],
+}))
 vi.mock('../pairsRegistry', () => mocks.pairsRegistry)
 vi.mock('../db', () => ({ upsertPricePoints: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../webhookDispatcher', () => ({ dispatchPriceUpdate: vi.fn().mockResolvedValue(undefined) }))
@@ -44,7 +57,7 @@ describe('fetchAquariusPools', () => {
     )
   })
 
-  it('falls back to config.aquarius.apiUrl when no override is passed', async () => {
+  it('falls back to the active network config apiUrl when no override is passed', async () => {
     ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: async () => ({ results: [] }),
@@ -53,7 +66,7 @@ describe('fetchAquariusPools', () => {
     await fetchAquariusPools(mockPair as any)
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining(mocks.config.aquarius.apiUrl)
+      expect.stringContaining(mocks.networkConfigs.mainnet.aquarius.apiUrl)
     )
   })
 
@@ -70,13 +83,9 @@ describe('startAquariusIngester', () => {
     vi.clearAllMocks()
   })
 
-  it('does not start the polling loop when Aquarius is disabled on the active network', async () => {
-    mocks.config.aquarius.enabled = false
-
-    await startAquariusIngester()
+  it('does not start the polling loop when Aquarius is disabled on the given network', async () => {
+    await startAquariusIngester('testnet')
 
     expect(mocks.pairsRegistry.getActivePairs).not.toHaveBeenCalled()
-
-    mocks.config.aquarius.enabled = true
   })
 })
