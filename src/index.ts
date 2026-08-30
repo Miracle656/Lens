@@ -20,6 +20,7 @@ import { registerScreenerRoutes } from './routes/screener'
 import { registerHistoryRoutes } from './api/history'
 import { registerX402 } from './middleware/x402'
 import { registerNetworkSelector } from './middleware/network'
+import { registerHttpMetrics } from './middleware/httpMetrics'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
@@ -63,6 +64,12 @@ async function main() {
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
   await app.register(compress)
+
+  // HTTP request/latency metrics. Registered FIRST, ahead of the network
+  // selector, API-key auth, the rate limiter and x402, so that requests those
+  // plugins reject (400/401/402/429) still have their timer started and are
+  // counted. See src/middleware/httpMetrics.ts.
+  await app.register(registerHttpMetrics)
 
   // Resolves the per-request Stellar network (?network= query param / x-network
   // header) onto req.network, validating it (400 on an unrecognised value).
