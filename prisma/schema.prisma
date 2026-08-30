@@ -199,6 +199,44 @@ model BazaarResource {
   @@map("bazaar_resources")
 }
 
+/// One settlement attempt through POST /settle.
+///
+/// Written BEFORE the transaction is submitted, so a resource server that
+/// times out and retries finds a record rather than causing a second payment.
+/// The idempotency key is the inner transaction hash — derived from the
+/// payload, and the same hash the ledger records.
+model SettlementAttempt {
+  id String @id @default(uuid())
+
+  /// CAIP-2 network the payment settles on ("stellar:pubnet" | "stellar:testnet").
+  network String
+
+  /// Inner transaction hash, hex — the idempotency key.
+  txHash String @map("tx_hash")
+
+  /// "submitting" | "settled" | "failed". A row stuck in "submitting" is
+  /// resolved by reading the ledger, never by resubmitting.
+  state String
+
+  payer        String?
+  payTo        String? @map("pay_to")
+  asset        String?
+  amount       String?
+  errorReason  String? @map("error_reason")
+  errorMessage String? @map("error_message")
+
+  /// The SettleResponse returned to the caller, replayed verbatim on a retry.
+  response Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  /// The lock. Two concurrent settles for the same payload race to insert and
+  /// exactly one wins; the loser replays the winner's answer.
+  @@unique([network, txHash], name: "network_txHash", map: "settlement_attempt_identity")
+  @@map("settlement_attempts")
+}
+
 model Webhook {
   id        String   @id @default(uuid())
   network   String   @default("testnet")

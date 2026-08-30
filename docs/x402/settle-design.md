@@ -1,11 +1,11 @@
 # Design note: `POST /settle`
 
-> **Status: proposal, not implementation.** #126 asks for the four decisions
-> below to be agreed in the open before any settlement code is written, because
-> this is the only facilitator route that moves money and a mistake in it is not
-> recoverable by redeploying. Nothing in this PR changes runtime behaviour —
-> the implementation follows in a second PR once the decisions here are agreed
-> or corrected.
+> **Status: implemented in the same PR as this note.** #126 asks for the four
+> decisions below to be made in the open before settlement code is written,
+> because this is the only facilitator route that moves money and a mistake in
+> it is not recoverable by redeploying. The note is therefore the first thing
+> to read and the thing to argue with: if a decision here is wrong, the code
+> that follows it is wrong, and changing it is cheap now and expensive later.
 
 ## Scope
 
@@ -208,21 +208,30 @@ asserted directly in the tests rather than left as a claim.
 `errorMessage` may carry detail for a human; it never carries key material,
 XDR, or anything about other payers.
 
-## What lands in the implementation PR
+## What the implementation does
 
-- `POST /settle` on the facilitator route, delegating to `ExactStellarScheme`
-- `SettlementAttempt` model + migration, written before submission
+- `POST /settle` in `src/routes/facilitator.ts`, delegating to
+  `ExactStellarScheme` through `x402Facilitator` — no verification or
+  settlement logic of our own
+- `SettlementAttempt` in `prisma/schema.prisma`, written before submission,
+  with `@@unique([network, txHash])` as the lock
+- `src/x402/facilitator.ts` holds configuration and keys only, and returns
+  null rather than a half-built facilitator when no signing key is configured
 - Both networks from the existing per-network config — no testnet-only path
-- Tests: the same payload settled twice submits once (the SDK's settle spied
-  on, asserted called once, second response identical to the first); the record
-  exists before submission (assert the row inside the settle spy); a `C…`
-  contract account payload settles through the same path as a `G…` one; every
-  failure branch returns a non-null `errorReason`; malformed payload → 400 in
+- Tests in `src/__tests__/facilitatorSettle.test.ts`: the same payload settled
+  twice submits once and replays the first answer; the record exists before
+  submission (asserted from inside the settle spy); an in-flight record
+  resolves from the ledger rather than resubmitting; a `C…` contract-account
+  payload takes the same path as a `G…` one; both networks; every failure
+  branch returns a non-null `errorReason`; malformed payload → 400 still in
   the settle shape
-- A published settled transaction hash per network, per the RFP's acceptance
-  criteria, once keys are funded
 
-## What I need agreed before writing it
+Still outstanding, and not something code can supply: **a published settled
+transaction hash per network**, per the RFP's acceptance criteria. That needs
+funded keys on both networks, which is a deployment step rather than a change
+to this PR.
+
+## The four decisions, restated for review
 
 1. **Key custody** — settlement signer plus optional fee-bump signer, env-held,
    fee-only balances, no secret ever persisted. Objections?
@@ -234,4 +243,6 @@ XDR, or anything about other payers.
    the trade to make here.
 4. **`submitting` rows resolve from the ledger, never by resubmission.**
 
-If any of those four is wrong, this is the cheap moment to say so.
+If any of those four is wrong, say so and the implementation follows the
+correction — these are the decisions the issue asked to have in the open, not
+settled facts.
