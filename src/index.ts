@@ -8,7 +8,8 @@ if (!process.env.DIRECT_DATABASE_URL && process.env.DATABASE_URL) {
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
-import { config } from './config'
+import { config, type NetworkName } from './config'
+import { getEnabledNetworks } from './network/enabledNetworks'
 import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
@@ -174,20 +175,26 @@ async function main() {
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
-  // Each ingester is independently fault-isolated via restartIngester.
-  // A crash in the Soroswap ingester cannot take down SDEX or AMM.
-  console.log('[lens] Starting ingesters...')
-  const restartIngester = (name: string, fn: () => Promise<void>) => {
+  // Each ingester is independently fault-isolated via restartIngester, keyed by
+  // the (venue, network) pair: a crash in, say, the Soroswap ingester on
+  // mainnet only restarts that one instance and cannot affect SDEX/AMM or the
+  // ingesters running on testnet.
+  const restartIngester = (name: string, network: NetworkName, fn: () => Promise<void>) => {
     fn().catch(err => {
-      console.error(`[lens] ${name} ingester crashed, restarting in 10s:`, err.message)
-      setTimeout(() => restartIngester(name, fn), 10_000)
+      console.error(`[lens] ${name}/${network} ingester crashed, restarting in 10s:`, err.message)
+      setTimeout(() => restartIngester(name, network, fn), 10_000)
     })
   }
-  restartIngester('SDEX', startSDEXIngester)
-  restartIngester('AMM', startAMMIngester)
-  restartIngester('Soroswap', startSoroswapIngester)
-  restartIngester('Snapshot', startSnapshotIngester)
-  restartIngester('Aquarius', startAquariusIngester)
+
+  const enabledNetworks = getEnabledNetworks()
+  console.log(`[lens] Starting ingesters for network(s): ${enabledNetworks.join(', ')}`)
+  for (const network of enabledNetworks) {
+    restartIngester('SDEX', network, () => startSDEXIngester(network))
+    restartIngester('AMM', network, () => startAMMIngester(network))
+    restartIngester('Soroswap', network, () => startSoroswapIngester(network))
+    restartIngester('Snapshot', network, () => startSnapshotIngester(network))
+    restartIngester('Aquarius', network, () => startAquariusIngester(network))
+  }
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
