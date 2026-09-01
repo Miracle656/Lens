@@ -208,8 +208,12 @@ model BazaarResource {
 model SettlementAttempt {
   id String @id @default(uuid())
 
-  /// CAIP-2 network the payment settles on ("stellar:pubnet" | "stellar:testnet").
-  network String
+  /// Network the payment settles on, as "testnet" | "mainnet" — the same
+  /// vocabulary every other model in this schema uses, so a network filter
+  /// works uniformly. The CAIP-2 id ("stellar:testnet") is a wire format and
+  /// stays on the wire; storing it here would silently exclude these rows
+  /// from any query that filters network the way the rest of the schema does.
+  network String @default("testnet")
 
   /// Inner transaction hash, hex — the idempotency key.
   txHash String @map("tx_hash")

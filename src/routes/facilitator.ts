@@ -143,7 +143,7 @@ function isUniqueViolation(err: unknown): boolean {
  * Registers the facilitator routes. Public: a facilitator cannot demand
  * payment to accept one.
  */
-export async function registerFacilitatorRoutes(app: FastifyInstance) {
+export async function registerSettleRoute(app: FastifyInstance) {
   app.post('/settle', { config: { public: true } }, async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as SettleRequestBody
 
@@ -193,7 +193,8 @@ export async function registerFacilitatorRoutes(app: FastifyInstance) {
     try {
       const attempt = await prisma.settlementAttempt.create({
         data: {
-          network: caip2,
+          // The DB stores the NetworkName; caip2 is the wire form and stays on the wire.
+          network,
           txHash,
           state: 'submitting',
           payTo: typeof body.paymentRequirements?.payTo === 'string' ? body.paymentRequirements.payTo : null,
@@ -208,7 +209,7 @@ export async function registerFacilitatorRoutes(app: FastifyInstance) {
       }
 
       const existing = await prisma.settlementAttempt.findUnique({
-        where: { network_txHash: { network: caip2, txHash } },
+        where: { network_txHash: { network, txHash } },
       })
 
       // A payload is consumed the moment its record exists. A second settle

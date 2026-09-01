@@ -95,40 +95,10 @@ describe('Facilitator endpoints', () => {
     expect(res.json()).toEqual({ isValid: false, invalidReason: 'expired' })
   })
 
-  it('POST /settle returns settle response', async () => {
-    mockSettle.mockResolvedValue({ success: true, transaction: 'txhash' })
-    const res = await app.inject({
-      method: 'POST',
-      url: '/settle',
-      payload: { paymentPayload: {}, paymentRequirements: {} }
-    })
-    expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ success: true, transaction: 'txhash' })
-  })
-
-  it('POST /settle returns 400 if settle returns success: false', async () => {
-    mockSettle.mockResolvedValue({ success: false, errorReason: 'failed' })
-    const res = await app.inject({
-      method: 'POST',
-      url: '/settle',
-      payload: { paymentPayload: {}, paymentRequirements: {} }
-    })
-    expect(res.statusCode).toBe(400)
-    expect(res.json()).toEqual({ success: false, errorReason: 'failed' })
-  })
-
-  it('POST /settle passes caught structured error response', async () => {
-    const error: any = new Error('Settlement failed')
-    error.statusCode = 400
-    error.response = { success: false, errorReason: 'tx_failed' }
-    mockSettle.mockRejectedValue(error)
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/settle',
-      payload: { paymentPayload: {}, paymentRequirements: {} }
-    })
-    expect(res.statusCode).toBe(400)
-    expect(res.json()).toEqual({ success: false, errorReason: 'tx_failed' })
-  })
+  // POST /settle is no longer registered by this plugin — it moved to
+  // src/routes/facilitator.ts with #149, which made it idempotent. The three
+  // settle cases that used to live here (success passthrough, success:false
+  // mapping, structured thrown error) are covered by facilitatorSettle.test.ts
+  // alongside the replay, in-flight-resolution and malformed-payload cases the
+  // old handler had no behaviour for.
 })

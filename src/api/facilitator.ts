@@ -89,45 +89,13 @@ async function facilitatorPlugin(app: FastifyInstance) {
     }
   })
 
-  app.post('/settle', { config: { public: true } }, async (req: any, reply) => {
-    try {
-      if (!req.body || typeof req.body !== 'object') {
-        return reply.status(400).send({
-          success: false,
-          errorReason: 'bad_request',
-          errorMessage: 'Missing request body'
-        })
-      }
-      const { x402Version, paymentPayload, paymentRequirements } = req.body
-      if (!paymentPayload || !paymentRequirements) {
-        return reply.status(400).send({
-          success: false,
-          errorReason: 'bad_request',
-          errorMessage: 'Missing paymentPayload or paymentRequirements'
-        })
-      }
-
-      const payloadWithVersion = { ...paymentPayload, x402Version: x402Version ?? paymentPayload.x402Version }
-      
-      const result = await facilitator.settle(payloadWithVersion, paymentRequirements)
-      
-      if (!result.success) {
-        return reply.status(400).send(result)
-      }
-      
-      return reply.send(result)
-    } catch (err: any) {
-      if (err && typeof err === 'object' && err.response && 'success' in err.response) {
-        return reply.status(err.statusCode || 400).send(err.response)
-      }
-      req.log.error(err, 'Settlement failed internally')
-      return reply.status(500).send({
-        success: false,
-        errorReason: 'internal_error',
-        errorMessage: 'Internal server error during settlement'
-      })
-    }
-  })
+  // NOTE: POST /settle lives in src/routes/facilitator.ts, not here.
+  // That implementation is idempotent — it writes a SettlementAttempt row
+  // keyed on the inner transaction hash BEFORE submitting, so a resource
+  // server that times out and retries replays the stored answer instead of
+  // paying a second time. Registering a second /settle here would be a
+  // duplicate Fastify route; the non-idempotent handler that used to sit at
+  // this spot was replaced by it (#149).
 }
 
 export const registerFacilitatorRoutes = fp(facilitatorPlugin, { name: 'facilitator' })

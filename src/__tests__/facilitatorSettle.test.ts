@@ -43,7 +43,7 @@ vi.mock('@stellar/stellar-sdk', async importOriginal => {
   }
 })
 
-import { registerFacilitatorRoutes, deriveIdempotencyKey, SETTLE_ERROR_REASONS } from '../routes/facilitator'
+import { registerSettleRoute, deriveIdempotencyKey, SETTLE_ERROR_REASONS } from '../routes/facilitator'
 
 /** A real, signed envelope — the route hashes it, so it cannot be a stub. */
 function buildEnvelope(passphrase: string): string {
@@ -92,7 +92,7 @@ function settleBody(
 
 async function buildApp() {
   const app = Fastify({ logger: false })
-  await registerFacilitatorRoutes(app)
+  await registerSettleRoute(app)
   await app.ready()
   return app
 }
@@ -160,7 +160,10 @@ describe('POST /settle', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           txHash: deriveIdempotencyKey(TESTNET_ENVELOPE, 'testnet'),
-          network: 'stellar:testnet',
+          // Stored as the NetworkName, not the CAIP-2 wire id — every other
+          // model in the schema uses this vocabulary, and a row tagged
+          // 'stellar:testnet' would be invisible to a network filter.
+          network: 'testnet',
           state: 'submitting',
         }),
       }),

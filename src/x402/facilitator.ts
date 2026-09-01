@@ -15,7 +15,7 @@ import { createEd25519Signer } from '@x402/stellar'
  * simulation checks and the submission all belong to `ExactStellarScheme`.
  *
  * See `docs/x402/settle-design.md` for the custody, idempotency and failure
- * decisions this implements.
+ * decisions the `/settle` route implements on top of this.
  */
 
 /** CAIP-2 ids, matching what `accepts[].network` carries. */
@@ -41,23 +41,15 @@ export interface SettleResponseShape {
   extensions?: Record<string, unknown>
 }
 
-function signerSecrets(): string[] {
-  return (process.env.FACILITATOR_SIGNER_SECRETS ?? '')
-    .split(',')
-    .map(secret => secret.trim())
-    .filter(secret => secret.length > 0)
-}
-
-function maxTransactionFeeStroops(): number {
-  const raw = Number(process.env.FACILITATOR_MAX_FEE_STROOPS)
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 50_000
-}
-
 const cache = new Map<NetworkName, SettlementFacilitator | null>()
 
 /**
  * Builds (and memoises) the facilitator for a network, or returns null when no
- * settlement key is configured.
+ * settlement key is configured for it.
+ *
+ * Keys come from `getNetworkConfig(network).facilitator`, the same place
+ * `/supported` and `/verify` read them, so there is one answer to "which
+ * account settles on this network".
  *
  * Null is a deliberate outcome rather than a thrown error: a deployment with
  * no keys can still serve `/supported` and the Bazaar, and `/settle` answers
@@ -72,21 +64,18 @@ export function getFacilitator(network: NetworkName): SettlementFacilitator | nu
   const cached = cache.get(network)
   if (cached !== undefined) return cached
 
-  const secrets = signerSecrets()
-  if (secrets.length === 0) {
+  const netConfig = getNetworkConfig(network)
+  const secret = netConfig.facilitator.secretKey?.trim()
+  if (!secret) {
     cache.set(network, null)
     return null
   }
 
   const caip2 = CAIP2_BY_NETWORK[network]
-  const signers = secrets.map(secret => createEd25519Signer(secret, caip2))
-  const feeBumpSecret = process.env.FACILITATOR_FEE_BUMP_SECRET?.trim()
-
-  const scheme = new ExactStellarScheme(signers, {
-    rpcConfig: { rpcUrl: getNetworkConfig(network).rpc.url },
+  const scheme = new ExactStellarScheme([createEd25519Signer(secret, caip2)], {
+    rpcConfig: { url: netConfig.rpc.url },
     areFeesSponsored: true,
-    maxTransactionFeeStroops: maxTransactionFeeStroops(),
-    ...(feeBumpSecret ? { feeBumpSigner: createEd25519Signer(feeBumpSecret, caip2) } : {}),
+    maxTransactionFeeStroops: netConfig.facilitator.feeStroops,
   })
 
   const facilitator = new x402Facilitator().register(caip2, scheme) as SettlementFacilitator

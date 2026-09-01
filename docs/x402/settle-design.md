@@ -87,9 +87,11 @@ XLM for fees and nothing else — no USDC, no user balances — so the blast rad
 of a compromised settlement key is "someone burns our fee budget", not
 "someone drains a payer".
 
-**Where the secret lives.** `FACILITATOR_SIGNER_SECRETS` (comma-separated, to
-match the `signers` array `ExactStellarScheme` already takes) and
-`FACILITATOR_FEE_BUMP_SECRET`, read once at plugin init like every other secret
+**Where the secret lives.** `FACILITATOR_SECRET_KEY_TESTNET` /
+`FACILITATOR_SECRET_KEY_MAINNET` (with the unsuffixed `FACILITATOR_SECRET_KEY`
+applying to testnet), resolved through `getNetworkConfig(network).facilitator`
+— the same place `/supported` and `/verify` read their keys, so there is one
+answer to "which account settles on this network". Read once at plugin init like every other secret
 in this repo, held in process memory, never written to Postgres, never logged,
 and never returned by any route. `/supported` continues to advertise only the
 public addresses, which #124 already does via `FACILITATOR_SIGNER_ADDRESSES`.
@@ -98,7 +100,7 @@ With no secrets configured the route registers but answers every request with
 misconfigured deploy fails loudly and safely instead of half-working.
 
 Fee ceiling stays configurable rather than hard-wired, per the RFP:
-`maxTransactionFeeStroops` from `FACILITATOR_MAX_FEE_STROOPS` (SDK default
+`maxTransactionFeeStroops` from `FACILITATOR_FEE_STROOPS_<NETWORK>` (default
 50,000), so a self-hoster can change it.
 
 ## 2. Idempotency
