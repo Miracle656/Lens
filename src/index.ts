@@ -29,6 +29,7 @@ import { registerUsageRoutes } from './api/usage'
 import { registerFacilitatorRoutes } from './api/facilitator'
 import { registerPriceRoutes } from './routes/price'
 import { registerVolumeRoutes } from './routes/volumes'
+import { registerSpreadsRoutes } from './routes/spreads'
 import { registerBenchmarkRoutes } from './routes/benchmark'
 import { registerOracleRoutes } from './routes/oracle'
 import { registerBasketRoutes } from './routes/basket'
@@ -137,6 +138,7 @@ async function main() {
   await registerHistoryRoutes(app)
   await registerPriceRoutes(app)
   await registerVolumeRoutes(app)
+  await registerSpreadsRoutes(app)
   await registerBenchmarkRoutes(app)
   await registerOracleRoutes(app)
   await registerBasketRoutes(app)
