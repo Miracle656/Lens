@@ -63,6 +63,8 @@ const schema = `
     pair: String!
     price: Float!
     ts: String!
+    """Which chain the price came from — testnet or mainnet."""
+    network: String!
   }
 
   type Query {
@@ -73,8 +75,16 @@ const schema = `
   }
 
   type Subscription {
-    """Streams a PriceUpdate every time the ingester records a new price for the given pair."""
-    priceUpdated(pair: String!): PriceUpdate!
+    """
+    Streams a PriceUpdate every time an ingester records a new price for the
+    given pair.
+
+    The network argument narrows the stream to one chain. It is optional, and
+    omitting it delivers every enabled network — the right default only if you
+    read the network field on each message, since a dual-network deployment
+    otherwise interleaves two chains prices on one stream.
+    """
+    priceUpdated(pair: String!, network: String): PriceUpdate!
   }
 `
 
@@ -162,9 +172,23 @@ const resolvers = {
 
   Subscription: {
     priceUpdated: {
-      subscribe: withFilter<{ priceUpdated: PricePublishedEvent }, unknown, MercuriusContext, { pair: string }>(
+      subscribe: withFilter<
+        { priceUpdated: PricePublishedEvent },
+        unknown,
+        MercuriusContext,
+        { pair: string; network?: string | null }
+      >(
         (_root, _args, { pubsub }) => pubsub.subscribe(PRICE_TOPIC),
-        (payload, { pair }) => payload.priceUpdated.pair === pair
+        // Both loops publish to one topic, so the network filter has to happen
+        // here. Omitting `network` keeps every chain — the message carries its
+        // own `network` field, so the subscriber can still tell them apart.
+        (payload, { pair, network }) =>
+          payload.priceUpdated.pair === pair &&
+          // == null, not === undefined: a client that passes the variable
+          // explicitly sends null rather than omitting it, and both mean
+          // "every network". Comparing against undefined alone would filter
+          // out every message for those clients.
+          (network == null || payload.priceUpdated.network === network)
       ),
     },
   },

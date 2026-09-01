@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events'
+import type { NetworkName } from './config'
 
 export const priceEmitter = new EventEmitter()
 
@@ -26,6 +27,16 @@ export interface PricePublishedEvent {
   price: number
   /** ISO-8601 timestamp of when the price was recorded */
   ts: string
+  /**
+   * Which chain this price came from.
+   *
+   * Load-bearing since #117: every enabled network runs its own ingester loop
+   * and they all publish to this one emitter. Without a discriminator a
+   * subscriber to XLM/USDC receives testnet and mainnet prices interleaved,
+   * indistinguishable, on the same stream — a chart that looks noisy rather
+   * than wrong, which is the harder kind to notice.
+   */
+  network: NetworkName
 }
 
 /**

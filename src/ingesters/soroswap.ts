@@ -245,6 +245,7 @@ export async function ingestPool(
       pair: pair.pairKey,
       price: spotPrice,
       ts: new Date().toISOString(),
+      network,
     })
 
     dispatchPriceUpdate({

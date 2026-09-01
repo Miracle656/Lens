@@ -101,10 +101,11 @@ protocol, so any [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) client 
 
 ```graphql
 subscription {
-  priceUpdated(pair: "XLM/USDC") {
+  priceUpdated(pair: "XLM/USDC", network: "mainnet") {
     pair
     price
     ts
+    network
   }
 }
 ```
@@ -125,10 +126,10 @@ const client = createClient({
 // `subscribe` returns an unsubscribe function — call it to close the channel.
 const unsubscribe = client.subscribe(
   {
-    query: `subscription ($pair: String!) {
-      priceUpdated(pair: $pair) { pair price ts }
+    query: `subscription ($pair: String!, $network: String) {
+      priceUpdated(pair: $pair, network: $network) { pair price ts network }
     }`,
-    variables: { pair: "XLM/USDC" },
+    variables: { pair: "XLM/USDC", network: "mainnet" },
   },
   {
     next: ({ data }) => console.log("price:", data.priceUpdated),
@@ -140,6 +141,12 @@ const unsubscribe = client.subscribe(
 // Later — stop receiving updates and close the socket cleanly:
 // unsubscribe();
 ```
+
+> **`network` is optional but you almost always want it.** Since #117 every
+> enabled network runs its own ingester loop and they all publish to the same
+> stream, so omitting it interleaves testnet and mainnet prices for the same
+> pair. Every message carries its own `network` field, so an omitted argument
+> is safe *if* you read that field — and misleading if you do not.
 
 > **Note:** the `pair` argument is the canonical `pairKey` (alphabetically
 > sorted, e.g. `XLM:native/USDC:GA5...`). Use the `listPairs` query to discover

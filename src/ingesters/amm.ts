@@ -35,7 +35,11 @@ export async function fetchPools(pair: WatchedPair, network: NetworkName = activ
   }
 }
 
-export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
+export async function snapshotPool(
+  pool: any,
+  pair: WatchedPair,
+  network: NetworkName = activeNetwork
+): Promise<void> {
   try {
     const r0 = pool.reserves[0]
     const r1 = pool.reserves[1]
@@ -89,6 +93,7 @@ export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> 
         pair: pair.pairKey,
         price: spotPrice,
         ts: new Date().toISOString(),
+        network,
       })
 
       dispatchPriceUpdate({
@@ -160,6 +165,7 @@ export async function ingestPoolTrades(
       pair: pair.pairKey,
       price: currentPrice,
       ts: points[points.length - 1].timestamp.toISOString(),
+      network,
     })
 
     dispatchPriceUpdate({
@@ -186,7 +192,7 @@ export async function startAMMIngester(network: NetworkName = activeNetwork): Pr
       console.log(`[amm] ${pair.pairKey}: found ${pools.length} AMM pools`)
 
       await Promise.all(pools.map(async pool => {
-        await snapshotPool(pool, pair)
+        await snapshotPool(pool, pair, network)
         await ingestPoolTrades(pool, pair, network)
       }))
     }

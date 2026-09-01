@@ -75,6 +75,7 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
         pair: pair.pairKey,
         price: currentPrice,
         ts: points[points.length - 1].timestamp.toISOString(),
+        network,
       })
 
       dispatchPriceUpdate({
