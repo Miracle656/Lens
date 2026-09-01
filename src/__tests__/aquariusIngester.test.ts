@@ -12,7 +12,14 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('../config', () => ({ config: mocks.config }))
+vi.mock('../config', () => ({
+  config: mocks.config,
+  activeNetwork: 'testnet',
+  // startAquariusIngester / ingestAquariusPair resolve the per-network Aquarius
+  // block via getNetworkConfig(network); the mock returns the same shape for
+  // whichever network is asked for.
+  getNetworkConfig: () => mocks.config,
+}))
 vi.mock('../pairsRegistry', () => mocks.pairsRegistry)
 vi.mock('../db', () => ({ upsertPricePoints: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../webhookDispatcher', () => ({ dispatchPriceUpdate: vi.fn().mockResolvedValue(undefined) }))

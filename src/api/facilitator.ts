@@ -1,0 +1,133 @@
+import fp from 'fastify-plugin'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+// @ts-expect-error
+import { x402Facilitator } from '@x402/core/facilitator'
+// @ts-expect-error
+import { ExactStellarScheme } from '@x402/stellar/exact/facilitator'
+import { createEd25519Signer } from '@x402/stellar'
+import { getNetworkConfig } from '../config'
+
+async function facilitatorPlugin(app: FastifyInstance) {
+  const facilitator = new x402Facilitator()
+  let hasFacilitator = false
+
+  // Register for testnet
+  const testnetConfig = getNetworkConfig('testnet')
+  if (testnetConfig.facilitator.secretKey) {
+    const testnetSigner = createEd25519Signer(testnetConfig.facilitator.secretKey, 'stellar:testnet')
+    const testnetScheme = new ExactStellarScheme([testnetSigner], {
+      rpcConfig: { url: testnetConfig.rpc.url },
+      areFeesSponsored: true,
+      maxTransactionFeeStroops: testnetConfig.facilitator.feeStroops,
+    })
+    facilitator.register('stellar:testnet', testnetScheme)
+    hasFacilitator = true
+  }
+
+  // Register for mainnet
+  const mainnetConfig = getNetworkConfig('mainnet')
+  if (mainnetConfig.facilitator.secretKey) {
+    const mainnetSigner = createEd25519Signer(mainnetConfig.facilitator.secretKey, 'stellar:pubnet')
+    const mainnetScheme = new ExactStellarScheme([mainnetSigner], {
+      rpcConfig: { url: mainnetConfig.rpc.url },
+      areFeesSponsored: true,
+      maxTransactionFeeStroops: mainnetConfig.facilitator.feeStroops,
+    })
+    facilitator.register('stellar:pubnet', mainnetScheme)
+    hasFacilitator = true
+  }
+
+  if (!hasFacilitator) {
+    app.log.warn('[facilitator] No FACILITATOR_SECRET_KEY found for any network, x402 facilitator routes are inactive.')
+  } else {
+    app.log.info('[facilitator] x402 facilitator initialized')
+  }
+
+  app.get('/supported', { config: { public: true } }, async (req, reply) => {
+    return facilitator.getSupported()
+  })
+
+  app.post('/verify', { config: { public: true } }, async (req: any, reply) => {
+    try {
+      if (!req.body || typeof req.body !== 'object') {
+        return reply.status(400).send({
+          isValid: false,
+          invalidReason: 'bad_request',
+          invalidMessage: 'Missing request body'
+        })
+      }
+      const { x402Version, paymentPayload, paymentRequirements } = req.body
+      if (!paymentPayload || !paymentRequirements) {
+        return reply.status(400).send({
+          isValid: false,
+          invalidReason: 'bad_request',
+          invalidMessage: 'Missing paymentPayload or paymentRequirements'
+        })
+      }
+
+      const payloadWithVersion = { ...paymentPayload, x402Version: x402Version ?? paymentPayload.x402Version }
+      
+      const result = await facilitator.verify(payloadWithVersion, paymentRequirements)
+      
+      if (!result.isValid) {
+        return reply.status(400).send(result)
+      }
+      
+      return reply.send(result)
+    } catch (err: any) {
+      // Return 400 with the VerifyResponse schema for errors caught during verification
+      if (err && typeof err === 'object' && err.response && 'isValid' in err.response) {
+        return reply.status(err.statusCode || 400).send(err.response)
+      }
+      
+      req.log.error(err, 'Verification failed internally')
+      return reply.status(500).send({
+        isValid: false,
+        invalidReason: 'internal_error',
+        invalidMessage: 'Internal server error during verification'
+      })
+    }
+  })
+
+  app.post('/settle', { config: { public: true } }, async (req: any, reply) => {
+    try {
+      if (!req.body || typeof req.body !== 'object') {
+        return reply.status(400).send({
+          success: false,
+          errorReason: 'bad_request',
+          errorMessage: 'Missing request body'
+        })
+      }
+      const { x402Version, paymentPayload, paymentRequirements } = req.body
+      if (!paymentPayload || !paymentRequirements) {
+        return reply.status(400).send({
+          success: false,
+          errorReason: 'bad_request',
+          errorMessage: 'Missing paymentPayload or paymentRequirements'
+        })
+      }
+
+      const payloadWithVersion = { ...paymentPayload, x402Version: x402Version ?? paymentPayload.x402Version }
+      
+      const result = await facilitator.settle(payloadWithVersion, paymentRequirements)
+      
+      if (!result.success) {
+        return reply.status(400).send(result)
+      }
+      
+      return reply.send(result)
+    } catch (err: any) {
+      if (err && typeof err === 'object' && err.response && 'success' in err.response) {
+        return reply.status(err.statusCode || 400).send(err.response)
+      }
+      req.log.error(err, 'Settlement failed internally')
+      return reply.status(500).send({
+        success: false,
+        errorReason: 'internal_error',
+        errorMessage: 'Internal server error during settlement'
+      })
+    }
+  })
+}
+
+export const registerFacilitatorRoutes = fp(facilitatorPlugin, { name: 'facilitator' })

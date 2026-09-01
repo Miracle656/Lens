@@ -58,6 +58,39 @@ query {
 }
 ```
 
+## Observability
+
+Prometheus metrics are exposed on `GET /metrics` (public, no API key required).
+
+Alongside the ingestion and database metrics, Lens exports the three HTTP
+signals needed to answer "is the API healthy":
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | Counter | `method`, `route`, `status_class` |
+| `http_request_duration_seconds` | Histogram | `method`, `route` |
+
+`route` is the matched route **template** (`/price/:assetA/:assetB`), never the
+resolved URL, so the number of time series stays bounded no matter how many
+distinct assets are queried. `status_class` is `2xx`/`4xx`/`5xx` rather than the
+exact code, for the same reason.
+
+```promql
+# Request rate
+sum(rate(http_requests_total[5m])) by (route)
+
+# Error rate
+sum(rate(http_requests_total{status_class="5xx"}[5m]))
+  / sum(rate(http_requests_total[5m]))
+
+# p95 latency
+histogram_quantile(0.95,
+  sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
+```
+
+See [`docs/http-metrics.md`](docs/http-metrics.md) for the full label reference,
+the bucket rationale and suggested alerting rules.
+
 ## Usage Examples
 
 Lens gates `/price`, `/pools`, and `/candles` behind x402 micropayments on Stellar (testnet by default). The `/status` endpoint is free.

@@ -8,7 +8,7 @@
  * Issue: #103
  */
 
-import { config } from '../../config'
+import { config, activeNetwork, getNetworkConfig, type NetworkName } from '../../config'
 import { getActivePairs } from '../../pairsRegistry'
 import { upsertPricePoints } from '../../db'
 import { dispatchPriceUpdate } from '../../webhookDispatcher'
@@ -52,8 +52,11 @@ export async function fetchAquariusPools(
   }
 }
 
-export async function ingestAquariusPair(pair: WatchedPair): Promise<void> {
-  const pools = await fetchAquariusPools(pair)
+export async function ingestAquariusPair(
+  pair: WatchedPair,
+  network: NetworkName = activeNetwork,
+): Promise<void> {
+  const pools = await fetchAquariusPools(pair, getNetworkConfig(network).aquarius.apiUrl)
   if (pools.length === 0) return
 
   const points = pools.flatMap(pool => {
@@ -98,16 +101,16 @@ async function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms))
 }
 
-export async function startAquariusIngester(): Promise<void> {
-  if (!config.aquarius.enabled) {
-    console.log('[aquarius] Aquarius is disabled on this network — ingester not started')
+export async function startAquariusIngester(network: NetworkName = activeNetwork): Promise<void> {
+  if (!getNetworkConfig(network).aquarius.enabled) {
+    console.log(`[aquarius] Aquarius is disabled on ${network} — ingester not started`)
     return
   }
 
-  console.log(`[aquarius] Starting Aquarius AMM ingester for ${getActivePairs().length} pairs`)
+  console.log(`[aquarius] Starting Aquarius AMM ingester for ${getActivePairs().length} pairs on ${network}`)
   while (true) {
     for (const pair of getActivePairs()) {
-      await ingestAquariusPair(pair)
+      await ingestAquariusPair(pair, network)
     }
     await sleep(config.indexer.pollIntervalMs)
   }

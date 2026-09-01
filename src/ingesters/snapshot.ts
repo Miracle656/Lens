@@ -1,5 +1,5 @@
 import { pgPool } from '../db'
-import { activeNetwork } from '../config'
+import { activeNetwork, type NetworkName } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { price_snapshots_total } from '../metrics'
 
@@ -22,8 +22,15 @@ export function floorToMinute(date: Date): Date {
  * total base_volume traded during the minute that just closed. Pairs with no
  * price history yet are skipped (we don't fabricate a price). Returns the
  * number of rows inserted.
+ *
+ * Snapshot rows are network-scoped (the `(network, pair, ts)` primary key), so
+ * `network` selects both which `price_points` are read and which network the
+ * inserted `price_snapshots` rows are tagged with.
  */
-export async function appendSnapshots(now: Date = new Date()): Promise<number> {
+export async function appendSnapshots(
+  now: Date = new Date(),
+  network: NetworkName = activeNetwork,
+): Promise<number> {
   const pairs = getActivePairs()
   if (pairs.length === 0) return 0
 
@@ -53,7 +60,7 @@ export async function appendSnapshots(now: Date = new Date()): Promise<number> {
      FROM latest l
      LEFT JOIN vol v ON v.pair_key = l.pair_key
      ON CONFLICT (network, pair, ts) DO NOTHING`,
-    [pairKeys, ts, activeNetwork]
+    [pairKeys, ts, network]
   )
 
   const inserted = result.rowCount ?? 0
@@ -70,8 +77,8 @@ function sleep(ms: number) {
  * wall-clock minute boundary so snapshot timestamps land on :00 seconds and the
  * volume window cleanly covers the minute that just elapsed.
  */
-export async function startSnapshotIngester(): Promise<void> {
-  console.log(`[snapshot] Starting 1-minute snapshot ingester for ${getActivePairs().length} pairs`)
+export async function startSnapshotIngester(network: NetworkName = activeNetwork): Promise<void> {
+  console.log(`[snapshot] Starting 1-minute snapshot ingester for ${getActivePairs().length} pairs on ${network}`)
 
   while (true) {
     // Sleep until the next minute boundary.
@@ -79,10 +86,10 @@ export async function startSnapshotIngester(): Promise<void> {
     await sleep(msToNextMinute)
 
     try {
-      const n = await appendSnapshots()
-      if (n > 0) console.log(`[snapshot] appended ${n} snapshot(s)`)
+      const n = await appendSnapshots(new Date(), network)
+      if (n > 0) console.log(`[snapshot] appended ${n} snapshot(s) on ${network}`)
     } catch (err) {
-      console.error('[snapshot] Error appending snapshots:', (err as Error).message)
+      console.error(`[snapshot] Error appending snapshots on ${network}:`, (err as Error).message)
     }
   }
 }

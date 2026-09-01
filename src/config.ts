@@ -41,6 +41,12 @@ export interface NetworkConfig {
   }
   /** Watched asset pairs for this network. */
   pairs: WatchedPair[]
+  facilitator: {
+    /** Secret key for the facilitator's fee-paying account */
+    secretKey?: string
+    /** Maximum fee in stroops the facilitator will pay */
+    feeStroops: number
+  }
 }
 
 // ── Asset / pair parsing ───────────────────────────────────────────────────────
@@ -164,6 +170,18 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     (network === 'testnet' ? process.env.WATCHED_PAIRS : undefined) ||
     ''
 
+  // ── Facilitator ───────────────────────────────────────────────────────────
+  const facilitatorSecretKey =
+    process.env[`FACILITATOR_SECRET_KEY_${suffix}`] ||
+    (network === 'testnet' ? process.env.FACILITATOR_SECRET_KEY : undefined)
+
+  const facilitatorFeeStroops = parseInt(
+    process.env[`FACILITATOR_FEE_STROOPS_${suffix}`] ||
+    process.env.FACILITATOR_FEE_STROOPS ||
+    '50000',
+    10
+  )
+
   return {
     horizon: { url: horizonUrl },
     rpc: { url: rpcUrl },
@@ -180,6 +198,7 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     },
     oracle: { enabled: oracleEnabled, reflectorContractId },
     pairs: parseWatchedPairs(rawPairs),
+    facilitator: { secretKey: facilitatorSecretKey, feeStroops: facilitatorFeeStroops },
   }
 }
 
@@ -275,6 +294,7 @@ export const config = {
   get aquarius() { return resolveNetwork(activeNetwork).aquarius },
   get oracle()   { return resolveNetwork(activeNetwork).oracle },
   get pairs()    { return resolveNetwork(activeNetwork).pairs },
+  get facilitator() { return resolveNetwork(activeNetwork).facilitator },
 
   // ── Global / network-agnostic ──────────────────────────────────────────────
   db:      globalConfig.db,

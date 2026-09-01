@@ -46,6 +46,38 @@ export const last_trade_timestamp = new Gauge({
   registers: [register]
 })
 
+export const http_requests_total = new Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests served, by method, route template and status class',
+  // `route` is the matched Fastify route TEMPLATE (e.g. /price/:assetA/:assetB),
+  // never the resolved URL — resolving it would mint a new time series per
+  // asset pair, address and cursor and eventually overwhelm Prometheus.
+  // `status_class` is 2xx/4xx/5xx rather than the exact code for the same
+  // reason; add an exact-status label only if a concrete need appears.
+  labelNames: ['method', 'route', 'status_class'],
+  registers: [register]
+})
+
+export const http_request_duration_seconds = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds, by method and route template',
+  labelNames: ['method', 'route'],
+  // Buckets are chosen for THIS service, not prom-client's defaults. The
+  // defaults top out at 10s and cluster below 1s, which suits fast in-process
+  // handlers; Lens handlers are not that. A typical request does a Redis cache
+  // lookup (single-digit ms) or, on a miss, a Postgres aggregate query plus —
+  // for /price and /route — Horizon/Soroswap network round-trips. So we want
+  // fine resolution across two regions:
+  //   5ms–50ms   cache hits, the common fast path; enough granularity to see
+  //              the Redis path regress before users notice.
+  //   100ms–2.5s DB aggregates and upstream venue calls, where p95 actually
+  //              lives and where an SLO would be set.
+  // The 5s and 10s buckets exist to catch upstream stalls short of a timeout;
+  // anything slower falls in +Inf and shows up as a saturated p99.
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [register]
+})
+
 export const db_query_duration_seconds = new Histogram({
   name: 'db_query_duration_seconds',
   help: 'Duration of database queries in seconds',

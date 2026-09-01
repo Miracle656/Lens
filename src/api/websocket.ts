@@ -7,7 +7,7 @@ import { resolveNetworkName } from '../middleware/network'
 import { fanOutManager } from '../ws/fanout'
 import { v4 as uuid } from 'uuid'
 
-const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
+const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://x402.org/facilitator'
 
 export async function registerWebSocket(app: FastifyInstance) {
   await app.register(websocket)

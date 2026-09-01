@@ -6,6 +6,15 @@ import type {
   DiscoveryResponse,
   RegisterBazaarResourceInput,
 } from './types'
+import { checkCatalogWriteRate } from './rateLimit'
+import {
+  stripControlChars,
+  validateListing,
+  type CatalogAuthority,
+  type CatalogDrop,
+} from './validation'
+
+export type { CatalogAuthority, CatalogDrop } from './validation'
 
 /** CAIP-2 network ids used by @x402/stellar and returned in `accepts[].network`. */
 const STELLAR_NETWORK_IDS: Record<NetworkName, string> = {
@@ -66,6 +75,101 @@ export async function registerBazaarResource(input: RegisterBazaarResourceInput)
       update: base,
     })
   }
+}
+
+/** Outcome of an untrusted catalog write. Never an exception — see soft drop. */
+export interface CatalogWriteResult {
+  /** Whether the listing landed in the catalog. */
+  accepted: boolean
+  /** Why it did not, when it did not. Empty on acceptance. */
+  drops: CatalogDrop[]
+}
+
+/**
+ * Registers a listing that arrived from a client, in the payment payload.
+ *
+ * This is the untrusted door into the catalog and the one #131 is about.
+ * `registerBazaarResource` above stays the trusted path, for listings Lens
+ * publishes about its own endpoints; everything a payer sends comes through
+ * here instead.
+ *
+ * Soft drop is the contract: a bad listing never fails the payment, because
+ * the payment is legitimate — only the metadata is not. The caller settles the
+ * payment either way and reports `drops` back through `EXTENSION-RESPONSES`
+ * (see `toExtensionResponses`), so a seller whose listing was rejected finds
+ * out why instead of watching it silently never appear.
+ */
+export async function submitCatalogListing(
+  input: RegisterBazaarResourceInput,
+  authority: CatalogAuthority,
+): Promise<CatalogWriteResult> {
+  const rate = await checkCatalogWriteRate(authority.payTo)
+  if (!rate.allowed) {
+    return {
+      accepted: false,
+      drops: [
+        {
+          field: 'listing',
+          code: rate.scope === 'unavailable' ? 'rate_limit_unavailable' : 'rate_limited',
+          message:
+            rate.scope === 'unavailable'
+              ? 'Catalog writes are temporarily unavailable; the payment was unaffected.'
+              : `Too many catalog writes for this payTo. Retry in ${rate.retryAfterSeconds ?? 60}s.`,
+        },
+      ],
+    }
+  }
+
+  const validated = validateListing(input, authority)
+  if (!validated.ok) return { accepted: false, drops: validated.drops }
+
+  const owner = await identityOwner(validated.value)
+  if (owner !== null && owner !== authority.payTo) {
+    return {
+      accepted: false,
+      drops: [
+        {
+          field: 'resource.url',
+          code: 'identity_owned_by_another_seller',
+          message: 'This resource identity is already registered to a different payTo.',
+        },
+      ],
+    }
+  }
+
+  try {
+    await registerBazaarResource(validated.value)
+  } catch {
+    return {
+      accepted: false,
+      drops: [{ field: 'listing', code: 'catalog_write_failed', message: 'The catalog could not store this listing.' }],
+    }
+  }
+
+  return { accepted: true, drops: [] }
+}
+
+/**
+ * Returns the `payTo` that already owns a listing's identity tuple, or null if
+ * the identity is unclaimed.
+ *
+ * First claim wins. A seller can update their own listing forever; nobody else
+ * can overwrite it, which is what stops a payer from repointing another
+ * seller's entry at their own endpoint or pricing.
+ */
+async function identityOwner(input: RegisterBazaarResourceInput): Promise<string | null> {
+  const existing = await prisma.bazaarResource.findFirst({
+    where: {
+      network: input.network,
+      url: input.resource.url,
+      ...(input.type === 'mcp'
+        ? { mcpToolName: (input.bazaar.info.input as { toolName: string }).toolName }
+        : { httpMethod: (input.bazaar.info.input as { method: string }).method }),
+    },
+    select: { payTo: true },
+  })
+
+  return existing?.payTo ?? null
 }
 
 export async function removeBazaarResource(network: NetworkName, url: string, key?: string): Promise<void> {
@@ -129,18 +233,21 @@ function toListing(row: {
     bazaar: {
       info: row.bazaarInfo as BazaarResourceListing['extensions']['bazaar']['info'],
       schema: row.bazaarSchema as Record<string, unknown>,
-      ...(row.routeTemplate ? { routeTemplate: row.routeTemplate } : {}),
+      ...(row.routeTemplate ? { routeTemplate: stripControlChars(row.routeTemplate) } : {}),
     },
   }
 
+  // Catalog content is untrusted at read time as well as at write time: rows
+  // written before #131's validation existed were never checked, and a value
+  // that is harmless inside JSON can still be harmful to whatever renders it.
   return {
     resource: {
-      url: row.url,
-      ...(row.description ? { description: row.description } : {}),
-      ...(row.mimeType ? { mimeType: row.mimeType } : {}),
-      ...(row.serviceName ? { serviceName: row.serviceName } : {}),
-      ...(row.tags.length > 0 ? { tags: row.tags } : {}),
-      ...(row.iconUrl ? { iconUrl: row.iconUrl } : {}),
+      url: stripControlChars(row.url),
+      ...(row.description ? { description: stripControlChars(row.description) } : {}),
+      ...(row.mimeType ? { mimeType: stripControlChars(row.mimeType) } : {}),
+      ...(row.serviceName ? { serviceName: stripControlChars(row.serviceName) } : {}),
+      ...(row.tags.length > 0 ? { tags: row.tags.map(stripControlChars) } : {}),
+      ...(row.iconUrl ? { iconUrl: stripControlChars(row.iconUrl) } : {}),
     },
     accepts: row.accepts as BazaarResourceListing['accepts'],
     extensions,

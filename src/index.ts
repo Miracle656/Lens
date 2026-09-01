@@ -8,7 +8,8 @@ if (!process.env.DIRECT_DATABASE_URL && process.env.DATABASE_URL) {
 import cors from '@fastify/cors'
 import compress from '@fastify/compress'
 import rateLimit from '@fastify/rate-limit'
-import { config } from './config'
+import { config, type NetworkName } from './config'
+import { getEnabledNetworks } from './network/enabledNetworks'
 import { redis } from './redis'
 import { pgPool } from './db'
 import { registerRESTRoutes } from './api/rest'
@@ -20,10 +21,12 @@ import { registerScreenerRoutes } from './routes/screener'
 import { registerHistoryRoutes } from './api/history'
 import { registerX402 } from './middleware/x402'
 import { registerNetworkSelector } from './middleware/network'
+import { registerHttpMetrics } from './middleware/httpMetrics'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
 import { registerAdminRoutes } from './api/admin'
 import { registerUsageRoutes } from './api/usage'
+import { registerFacilitatorRoutes } from './api/facilitator'
 import { registerPriceRoutes } from './routes/price'
 import { registerVolumeRoutes } from './routes/volumes'
 import { registerBenchmarkRoutes } from './routes/benchmark'
@@ -63,6 +66,12 @@ async function main() {
   const app = Fastify({ logger: { level: 'warn' } })
   await app.register(cors, { origin: true })
   await app.register(compress)
+
+  // HTTP request/latency metrics. Registered FIRST, ahead of the network
+  // selector, API-key auth, the rate limiter and x402, so that requests those
+  // plugins reject (400/401/402/429) still have their timer started and are
+  // counted. See src/middleware/httpMetrics.ts.
+  await app.register(registerHttpMetrics)
 
   // Resolves the per-request Stellar network (?network= query param / x-network
   // header) onto req.network, validating it (400 on an unrecognised value).
@@ -117,6 +126,7 @@ async function main() {
   // `config.public` so the API-key auth hook skips them.
   await registerAdminRoutes(app)
   await registerUsageRoutes(app)
+  await app.register(registerFacilitatorRoutes)
 
   await app.register(registerX402)
   await registerRESTRoutes(app)
@@ -174,20 +184,26 @@ async function main() {
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
-  // Each ingester is independently fault-isolated via restartIngester.
-  // A crash in the Soroswap ingester cannot take down SDEX or AMM.
-  console.log('[lens] Starting ingesters...')
-  const restartIngester = (name: string, fn: () => Promise<void>) => {
+  // Each ingester is independently fault-isolated via restartIngester, keyed by
+  // the (venue, network) pair: a crash in, say, the Soroswap ingester on
+  // mainnet only restarts that one instance and cannot affect SDEX/AMM or the
+  // ingesters running on testnet.
+  const restartIngester = (name: string, network: NetworkName, fn: () => Promise<void>) => {
     fn().catch(err => {
-      console.error(`[lens] ${name} ingester crashed, restarting in 10s:`, err.message)
-      setTimeout(() => restartIngester(name, fn), 10_000)
+      console.error(`[lens] ${name}/${network} ingester crashed, restarting in 10s:`, err.message)
+      setTimeout(() => restartIngester(name, network, fn), 10_000)
     })
   }
-  restartIngester('SDEX', startSDEXIngester)
-  restartIngester('AMM', startAMMIngester)
-  restartIngester('Soroswap', startSoroswapIngester)
-  restartIngester('Snapshot', startSnapshotIngester)
-  restartIngester('Aquarius', startAquariusIngester)
+
+  const enabledNetworks = getEnabledNetworks()
+  console.log(`[lens] Starting ingesters for network(s): ${enabledNetworks.join(', ')}`)
+  for (const network of enabledNetworks) {
+    restartIngester('SDEX', network, () => startSDEXIngester(network))
+    restartIngester('AMM', network, () => startAMMIngester(network))
+    restartIngester('Soroswap', network, () => startSoroswapIngester(network))
+    restartIngester('Snapshot', network, () => startSnapshotIngester(network))
+    restartIngester('Aquarius', network, () => startAquariusIngester(network))
+  }
 
   console.log(`[lens] Watching ${getActivePairs().length} pairs: ${getActivePairs().map(p => p.pairKey).join(', ')}`)
 }
