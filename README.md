@@ -36,7 +36,8 @@ curl "https://api.example.com/price/XLM/USDC?network=mainnet"
 ```
 
 ### GraphQL
-Available at `/graphql` with GraphiQL IDE at `/graphiql`.
+Available at `/graphql` with GraphiQL IDE at `/graphiql`. Real-time price
+streaming is available via the `priceUpdated` [subscription](#graphql-subscriptions-live-prices).
 
 ```graphql
 query {
@@ -90,6 +91,67 @@ histogram_quantile(0.95,
 
 See [`docs/http-metrics.md`](docs/http-metrics.md) for the full label reference,
 the bucket rationale and suggested alerting rules.
+
+### GraphQL Subscriptions (live prices)
+
+Lens exposes a `priceUpdated(pair)` subscription that pushes a message every time
+an ingester (SDEX, Horizon AMM, or Soroswap) records a new price for the pair.
+It runs over the same `/graphql` endpoint using the `graphql-transport-ws`
+protocol, so any [`graphql-ws`](https://github.com/enisdenjo/graphql-ws) client works.
+
+```graphql
+subscription {
+  priceUpdated(pair: "XLM/USDC", network: "mainnet") {
+    pair
+    price
+    ts
+    network
+  }
+}
+```
+
+```bash
+npm install graphql-ws ws
+```
+
+```typescript
+import { createClient } from "graphql-ws";
+import WebSocket from "ws"; // browsers already have WebSocket globally
+
+const client = createClient({
+  url: "ws://localhost:3002/graphql",
+  webSocketImpl: WebSocket, // omit in the browser
+});
+
+// `subscribe` returns an unsubscribe function — call it to close the channel.
+const unsubscribe = client.subscribe(
+  {
+    query: `subscription ($pair: String!, $network: String) {
+      priceUpdated(pair: $pair, network: $network) { pair price ts network }
+    }`,
+    variables: { pair: "XLM/USDC", network: "mainnet" },
+  },
+  {
+    next: ({ data }) => console.log("price:", data.priceUpdated),
+    error: (err) => console.error("subscription error:", err),
+    complete: () => console.log("subscription closed"),
+  },
+);
+
+// Later — stop receiving updates and close the socket cleanly:
+// unsubscribe();
+```
+
+> **`network` is optional but you almost always want it.** Since #117 every
+> enabled network runs its own ingester loop and they all publish to the same
+> stream, so omitting it interleaves testnet and mainnet prices for the same
+> pair. Every message carries its own `network` field, so an omitted argument
+> is safe *if* you read that field — and misleading if you do not.
+
+> **Note:** the `pair` argument is the canonical `pairKey` (alphabetically
+> sorted, e.g. `XLM:native/USDC:GA5...`). Use the `listPairs` query to discover
+> the exact keys being indexed. Only the pair you subscribe to is delivered;
+> updates for other pairs are filtered out server-side.
 
 ## Usage Examples
 

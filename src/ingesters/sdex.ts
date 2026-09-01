@@ -5,6 +5,7 @@ import { getHorizonServer } from '../network/clients'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
+import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
 // Last seen price per pairKey — used for threshold crossing detection
@@ -69,6 +70,13 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
       const lastCursor = trades.records[trades.records.length - 1].paging_token
       await setIndexerCursor(stateId, lastCursor)
       console.log(`[sdex] ${pair.pairKey}: ingested ${points.length} trades`)
+
+      publishPriceUpdate({
+        pair: pair.pairKey,
+        price: currentPrice,
+        ts: points[points.length - 1].timestamp.toISOString(),
+        network,
+      })
 
       dispatchPriceUpdate({
         assetA: pair.assetA.code,

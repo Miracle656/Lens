@@ -3,6 +3,7 @@ import { config, activeNetwork, getNetworkConfig, type NetworkName } from '../co
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
+import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
 const lastPrice = new Map<string, number>()
@@ -34,7 +35,11 @@ export async function fetchPools(pair: WatchedPair, network: NetworkName = activ
   }
 }
 
-export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> {
+export async function snapshotPool(
+  pool: any,
+  pair: WatchedPair,
+  network: NetworkName = activeNetwork
+): Promise<void> {
   try {
     const r0 = pool.reserves[0]
     const r1 = pool.reserves[1]
@@ -83,6 +88,14 @@ export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> 
 
       const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
       lastPrice.set(pair.pairKey, spotPrice)
+
+      publishPriceUpdate({
+        pair: pair.pairKey,
+        price: spotPrice,
+        ts: new Date().toISOString(),
+        network,
+      })
+
       dispatchPriceUpdate({
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
@@ -148,6 +161,13 @@ export async function ingestPoolTrades(
     await setIndexerCursor(stateId, lastCursor)
     console.log(`[amm] Pool ${pool.id.slice(0, 8)}: ingested ${points.length} trades`)
 
+    publishPriceUpdate({
+      pair: pair.pairKey,
+      price: currentPrice,
+      ts: points[points.length - 1].timestamp.toISOString(),
+      network,
+    })
+
     dispatchPriceUpdate({
       assetA: pair.assetA.code,
       assetB: pair.assetB.code,
@@ -172,7 +192,7 @@ export async function startAMMIngester(network: NetworkName = activeNetwork): Pr
       console.log(`[amm] ${pair.pairKey}: found ${pools.length} AMM pools`)
 
       await Promise.all(pools.map(async pool => {
-        await snapshotPool(pool, pair)
+        await snapshotPool(pool, pair, network)
         await ingestPoolTrades(pool, pair, network)
       }))
     }

@@ -1,11 +1,17 @@
 import type { FastifyInstance } from 'fastify'
 import { price_requests_total } from '../metrics'
-import mercurius from 'mercurius'
+import mercurius, { withFilter, type MercuriusContext } from 'mercurius'
 import { getCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
 import { config } from '../config'
+import { priceEmitter, PRICE_PUBLISHED, type PricePublishedEvent } from '../events'
+
+// Mercurius pubsub topic that carries every new price. A single app-level
+// listener bridges the ingesters' in-process `priceEmitter` onto this topic;
+// each subscriber then filters it down to the pair they asked for.
+const PRICE_TOPIC = 'PRICE_UPDATED'
 
 const schema = `
   type AggregatedPrice {
@@ -53,11 +59,32 @@ const schema = `
     low: Float
   }
 
+  type PriceUpdate {
+    pair: String!
+    price: Float!
+    ts: String!
+    """Which chain the price came from — testnet or mainnet."""
+    network: String!
+  }
+
   type Query {
     getPrice(assetA: String!, assetB: String!): AggregatedPrice
     getBestRoute(assetA: String!, assetB: String!, amount: Float!): RouteInfo
     getPriceHistory(assetA: String!, assetB: String!, window: String!, limit: Int): [PriceBucket]
     listPairs: [String]!
+  }
+
+  type Subscription {
+    """
+    Streams a PriceUpdate every time an ingester records a new price for the
+    given pair.
+
+    The network argument narrows the stream to one chain. It is optional, and
+    omitting it delivers every enabled network — the right default only if you
+    read the network field on each message, since a dual-network deployment
+    otherwise interleaves two chains prices on one stream.
+    """
+    priceUpdated(pair: String!, network: String): PriceUpdate!
   }
 `
 
@@ -142,6 +169,29 @@ const resolvers = {
       return config.pairs.map(p => p.pairKey)
     },
   },
+
+  Subscription: {
+    priceUpdated: {
+      subscribe: withFilter<
+        { priceUpdated: PricePublishedEvent },
+        unknown,
+        MercuriusContext,
+        { pair: string; network?: string | null }
+      >(
+        (_root, _args, { pubsub }) => pubsub.subscribe(PRICE_TOPIC),
+        // Both loops publish to one topic, so the network filter has to happen
+        // here. Omitting `network` keeps every chain — the message carries its
+        // own `network` field, so the subscriber can still tell them apart.
+        (payload, { pair, network }) =>
+          payload.priceUpdated.pair === pair &&
+          // == null, not === undefined: a client that passes the variable
+          // explicitly sends null rather than omitting it, and both mean
+          // "every network". Comparing against undefined alone would filter
+          // out every message for those clients.
+          (network == null || payload.priceUpdated.network === network)
+      ),
+    },
+  },
 }
 
 export async function registerGraphQL(app: FastifyInstance) {
@@ -150,5 +200,28 @@ export async function registerGraphQL(app: FastifyInstance) {
     resolvers,
     graphiql: true,
     path: '/graphql',
+    subscription: {
+      // Speak the `graphql-transport-ws` subprotocol (the modern `graphql-ws`
+      // library) rather than the legacy `subscriptions-transport-ws`.
+      fullWsTransport: true,
+      wsDefaultSubprotocol: 'graphql-transport-ws',
+    },
+  })
+
+  // Bridge: forward every price the ingesters emit onto the GraphQL pubsub
+  // topic. Mercurius wraps the payload under the subscription field name so
+  // `withFilter` and the resolver receive `{ priceUpdated: <event> }`.
+  const onPricePublished = (event: PricePublishedEvent) => {
+    app.graphql.pubsub.publish({
+      topic: PRICE_TOPIC,
+      payload: { priceUpdated: event },
+    })
+  }
+  priceEmitter.on(PRICE_PUBLISHED, onPricePublished)
+
+  // Detach the listener when the server shuts down so repeated
+  // register/close cycles (e.g. in tests) don't leak listeners.
+  app.addHook('onClose', async () => {
+    priceEmitter.off(PRICE_PUBLISHED, onPricePublished)
   })
 }
