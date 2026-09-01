@@ -1,95 +1,107 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import websocket from '@fastify/websocket'
 import { priceEmitter, PRICE_UPDATE, PriceUpdateEvent } from '../events'
-// @ts-ignore
-import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
-// @ts-ignore
-import { ExactStellarScheme } from '@x402/stellar/exact/server'
+import { activeNetwork, type NetworkName } from '../config'
+import { X402_NETWORK_LABEL, paymentAddressFor, getX402ResourceServer } from '../x402/network'
+import { resolveNetworkName } from '../middleware/network'
+import { fanOutManager } from '../ws/fanout'
+import { v4 as uuid } from 'uuid'
 
-const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
-const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
-const NETWORK = (process.env.STELLAR_NETWORK === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet') as string
+const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://x402.org/facilitator'
 
 export async function registerWebSocket(app: FastifyInstance) {
   await app.register(websocket)
 
-  let resourceServer: any = null
-  if (PAYMENT_ADDRESS) {
-    try {
-      const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL })
-      resourceServer = new x402ResourceServer(facilitatorClient)
-        .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
-      await resourceServer.initialize()
-    } catch (err) {
-      app.log.warn(`[ws] x402 init failed, streaming without payment gating: ${(err as Error).message}`)
-      resourceServer = null
-    }
-  }
-
-  app.get('/ws', { websocket: true, config: { public: true } }, (connection, req: FastifyRequest) => {
+  // @fastify/websocket v11: handler receives (socket, req) directly — no connection wrapper
+  app.get('/ws', { websocket: true, config: { public: true } }, (socket: any, req: FastifyRequest) => {
     app.log.info('[ws] New connection attempt')
 
-    // x402 Auth
+    const rawNetwork = (req.query as any)?.network ?? (req.headers['x-network'] as string | undefined)
+    const resolved = resolveNetworkName(rawNetwork)
+    if (!resolved.ok) {
+      socket.send(JSON.stringify({ type: 'error', status: 400, message: resolved.error }))
+      socket.close()
+      return
+    }
+    const network: NetworkName = resolved.network
+
+    // This process only ingests and streams live prices for `activeNetwork`
+    // (see src/config.ts) — the underlying price events carry no network tag
+    // yet (that's the deeper aggregation-layer work), so a request for any
+    // other network can't be honestly served here.
+    if (network !== activeNetwork) {
+      socket.send(JSON.stringify({
+        type: 'error',
+        status: 400,
+        message: `This instance streams "${activeNetwork}" only; requested "${network}"`,
+      }))
+      socket.close()
+      return
+    }
+
+    const paymentAddress = paymentAddressFor(network)
     const paymentHeader = (req.headers['x-payment'] as string) || (req.query as any).payment
 
     const requirements = {
       scheme: 'exact' as const,
-      price: '$0.50', // Premium for real-time streaming
-      network: NETWORK,
-      payTo: PAYMENT_ADDRESS!,
+      price: '$0.50',
+      network: X402_NETWORK_LABEL[network],
+      payTo: paymentAddress!,
     }
 
-    if (!PAYMENT_ADDRESS || !resourceServer) {
-      app.log.warn('[ws] x402 disabled (PAYMENT_ADDRESS missing or x402 init failed)')
+    if (!paymentAddress) {
+      app.log.warn('[ws] x402 disabled (no payment address configured for this network)')
     } else if (!paymentHeader) {
-      connection.socket.send(JSON.stringify({
+      socket.send(JSON.stringify({
         type: 'error',
         status: 402,
         message: 'Payment required for real-time streaming',
         requirements
       }))
-      connection.socket.close()
+      socket.close()
       return
     } else {
-      // Verify payment
-      verifyPayment(paymentHeader, requirements, resourceServer)
+      getX402ResourceServer(network, FACILITATOR_URL)
+        .then(resourceServer => verifyPayment(paymentHeader, requirements, resourceServer))
         .then(isValid => {
           if (!isValid) {
-            connection.socket.send(JSON.stringify({ type: 'error', message: 'Invalid payment' }))
-            connection.socket.close()
+            socket.send(JSON.stringify({ type: 'error', message: 'Invalid payment' }))
+            socket.close()
           } else {
-            setupStream(connection, req)
+            setupStream(socket, req)
           }
         })
         .catch(err => {
-          connection.socket.send(JSON.stringify({ type: 'error', message: err.message }))
-          connection.socket.close()
+          socket.send(JSON.stringify({ type: 'error', message: err.message }))
+          socket.close()
         })
       return
     }
 
-    // If x402 is disabled or already passed (shouldn't happen with logic above but for safety)
-    setupStream(connection, req)
+    setupStream(socket, req)
   })
 
-  function setupStream(connection: any, req: FastifyRequest) {
+  function setupStream(socket: any, req: FastifyRequest) {
     app.log.info('[ws] Connection authorized')
-    connection.socket.send(JSON.stringify({ type: 'status', message: 'Streaming active' }))
+    socket.send(JSON.stringify({ type: 'status', message: 'Streaming active' }))
 
-    const onPriceUpdate = (event: PriceUpdateEvent) => {
-      if (connection.socket.readyState === 1) { // OPEN
-        connection.socket.send(JSON.stringify({
-          type: 'price_update',
-          ...event
-        }))
-      }
-    }
+    // Register with fan-out manager for backpressure-aware broadcasting
+    const clientId = uuid()
+    const unsubscribe = fanOutManager.register('*', {
+      id: clientId,
+      send: (data: string) => {
+        if (socket.readyState === 1) { // OPEN
+          socket.send(data)
+        }
+      },
+      close: () => {
+        socket.close()
+      },
+    })
 
-    priceEmitter.on(PRICE_UPDATE, onPriceUpdate)
-
-    connection.socket.on('close', () => {
+    socket.on('close', () => {
       app.log.info('[ws] Connection closed')
-      priceEmitter.off(PRICE_UPDATE, onPriceUpdate)
+      unsubscribe()
     })
   }
 }

@@ -278,6 +278,81 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
 
+  /prices/history:
+    get:
+      operationId: getPriceHistory
+      summary: Get historical 1-minute price snapshots
+      description: >-
+        Returns minute-resolution price snapshots for a pair over [from, to],
+        optionally aggregated into 5m or 1h buckets. Snapshots are retained for
+        ~30 days. Gated by x402 (matches the /price prefix).
+      security:
+        - x402: []
+      parameters:
+        - name: pair
+          in: query
+          required: true
+          schema:
+            type: string
+          example: XLM/USDC
+        - name: interval
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [1m, 5m, 1h]
+            default: 1m
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Historical price snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pair:
+                    type: string
+                  interval:
+                    type: string
+                  from:
+                    type: string
+                    format: date-time
+                  to:
+                    type: string
+                    format: date-time
+                  count:
+                    type: integer
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ts:
+                          type: string
+                          format: date-time
+                        price:
+                          type: number
+                        volume:
+                          type: number
+        '400':
+          description: Invalid parameters
+        '402':
+          $ref: '#/components/responses/PaymentRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
   /pairs:
     get:
       operationId: listPairs

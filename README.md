@@ -17,9 +17,23 @@ Aggregates price data from Stellar's Classic Order Book (SDEX) and AMM Liquidity
 | GET | `/price/:assetA/:assetB` | Current VWAP, 24h volume, best route |
 | GET | `/price/:assetA/:assetB/route?amount=1000` | Best execution route for a given amount |
 | GET | `/price/:assetA/:assetB/history?window=1h` | OHLCV history (`1m`, `5m`, `1h`, `24h`) |
+| GET | `/prices/history?pair=XLM/USDC&from=…&to=…&interval=1m` | Historical 1-minute price snapshots, optionally aggregated (`1m`, `5m`, `1h`); ~30-day retention |
 | GET | `/pools` | Active AMM pools being watched |
 | GET | `/pairs` | Watched trading pairs |
 | GET | `/status` | Indexer health |
+| GET | `/discovery/resources?type=&payTo=&network=&extensions=&limit=&offset=` | Bazaar catalog of x402-discoverable resources (spec: [`bazaar`](https://github.com/x402-foundation/x402/blob/main/specs/extensions/bazaar.md)) |
+
+Every route accepts an optional `?network=testnet\|mainnet` query param (or
+`x-network` header) to pick the Stellar network — default is `testnet`. An
+unrecognised value gets `400`. The `/price/*` endpoints' live SDEX pricing and
+x402 payment `network`/`payTo` are fully per-request today; DB-backed reads
+(candles, history, pools, AMM pricing) are still served from whichever
+network this instance is currently indexing (`STELLAR_NETWORK`) — that data
+layer isn't network-partitioned yet.
+
+```bash
+curl "https://api.example.com/price/XLM/USDC?network=mainnet"
+```
 
 ### GraphQL
 Available at `/graphql` with GraphiQL IDE at `/graphiql`. Real-time price
@@ -44,6 +58,39 @@ query {
   }
 }
 ```
+
+## Observability
+
+Prometheus metrics are exposed on `GET /metrics` (public, no API key required).
+
+Alongside the ingestion and database metrics, Lens exports the three HTTP
+signals needed to answer "is the API healthy":
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | Counter | `method`, `route`, `status_class` |
+| `http_request_duration_seconds` | Histogram | `method`, `route` |
+
+`route` is the matched route **template** (`/price/:assetA/:assetB`), never the
+resolved URL, so the number of time series stays bounded no matter how many
+distinct assets are queried. `status_class` is `2xx`/`4xx`/`5xx` rather than the
+exact code, for the same reason.
+
+```promql
+# Request rate
+sum(rate(http_requests_total[5m])) by (route)
+
+# Error rate
+sum(rate(http_requests_total{status_class="5xx"}[5m]))
+  / sum(rate(http_requests_total[5m]))
+
+# p95 latency
+histogram_quantile(0.95,
+  sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
+```
+
+See [`docs/http-metrics.md`](docs/http-metrics.md) for the full label reference,
+the bucket rationale and suggested alerting rules.
 
 ### GraphQL Subscriptions (live prices)
 
@@ -213,11 +260,13 @@ Or interactively at [http://localhost:3002/graphiql](http://localhost:3002/graph
 
 ## Documentation
 Detailed system design and data flow diagrams can be found in the [Architecture Overview](docs/architecture.md).
-The API specification is available in [OpenAPI 3.0 format](openapi.yaml).
+The API specification is available in [OpenAPI 3.0 format](openapi.yaml) and is auto-published to GitHub Pages at https://miracle656.github.io/lens/openapi.json.
 
 ## Examples
 
 The [oracle relay example](examples/oracle-relay/README.md) shows a minimal Soroban contract plus a Node relay that reads Lens prices and pushes them on chain.
+
+The [price alert bot example](examples/alert-bot/README.md) shows an "if XLM > X notify me" bot built on the WebSocket price stream — see the [cookbook walkthrough](docs/cookbook/alert-bot.md).
 
 ## Docker Quickstart
 The fastest way to get Lens running locally is with Docker:
@@ -263,13 +312,14 @@ npm run dev
 | `HORIZON_URL` | Stellar Horizon server URL | - | No |
 | `RPC_URL` | Soroban RPC server URL | - | No |
 | `NETWORK_PASSPHRASE` | Stellar network passphrase | - | No |
-| `STELLAR_NETWORK` | `mainnet` or `testnet` (for x402 logic) | `testnet` | No |
+| `STELLAR_NETWORK` | `mainnet` or `testnet` — this instance's default/ingested network | `testnet` | No |
 | `POLL_INTERVAL_MS` | Indexer polling frequency (ms) | `5000` | No |
 | `SDEX_PAGE_SIZE` | Trades per page for SDEX ingestion | `200` | No |
 | `AMM_PAGE_SIZE` | Trades per page for AMM ingestion | `200` | No |
 | `ADMIN_API_KEY` | Key for admin route authentication | - | No |
 | `WATCHED_PAIRS` | Comma-separated list of asset pairs to index | - | **Yes** |
 | `ORACLE_PAYMENT_ADDRESS` | Stellar address for x402 API payments | - | No* |
+| `ORACLE_PAYMENT_ADDRESS_TESTNET` / `ORACLE_PAYMENT_ADDRESS_MAINNET` | Per-network override for the address above | - | No |
 | `X402_FACILITATOR_URL` | x402 facilitator service URL | - | No |
 
 *\*Required if enabling x402 payment gating.*

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   lens:
     build: .
@@ -9,6 +7,7 @@ services:
       - DATABASE_URL=postgresql://lens:lens@postgres:5432/lens
       - REDIS_URL=redis://redis:6379
       - WATCHED_PAIRS=XLM:native/USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+      - REQUIRE_API_KEY=false
     depends_on:
       postgres:
         condition: service_healthy

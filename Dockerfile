@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -13,12 +13,12 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Run
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
 # Install curl for healthcheck
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 # Copy production dependencies
 COPY package*.json ./

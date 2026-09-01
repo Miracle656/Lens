@@ -84,6 +84,7 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
   priceChange24h: number; sources: number
   confidence: 'high' | 'medium' | 'low' | 'unknown'
   lastTradeAgeSeconds: number | null
+  stale: boolean
 }> {
   const [vwap1m, vwap5m, vwap1h, vwap24h, sdexVwap24h, priceChange24h, ammSpotResult, lastTradeResult] = await Promise.all([
     calculateVWAP(pairKey, 1),
@@ -157,6 +158,8 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
     confidence = 'low'
   }
 
+  const stale = lastTradeAgeSeconds !== null && lastTradeAgeSeconds >= 300
+
   return {
     price: vwap1h || vwap24h || ammPrice || 0,
     sdexPrice: sdexVwap24h,
@@ -172,5 +175,6 @@ export async function getAggregatedPrice(pairKey: string): Promise<{
     sources,
     confidence,
     lastTradeAgeSeconds,
+    stale,
   }
 }

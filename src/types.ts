@@ -33,6 +33,7 @@ export interface AggregatedPrice {
   sources: number
   confidence: 'high' | 'medium' | 'low' | 'unknown'
   lastTradeAgeSeconds: number | null
+  stale: boolean
 }
 
 export interface RouteInfo {
