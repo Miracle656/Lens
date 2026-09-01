@@ -1,7 +1,8 @@
 import { Queue, Worker } from 'bullmq'
 import { pgPool } from '../db'
+import { activeNetwork } from '../config'
 
-const QUEUE_NAME = 'snapshot-retention'
+const QUEUE_NAME = `${activeNetwork}:snapshot-retention`
 
 /** Snapshots older than this many days are pruned by the retention job. */
 export const SNAPSHOT_RETENTION_DAYS = 30
@@ -24,8 +25,8 @@ export function createSnapshotRetentionQueue() {
 export async function pruneOldSnapshots(retentionDays: number = SNAPSHOT_RETENTION_DAYS): Promise<number> {
   const result = await pgPool.query(
     `DELETE FROM price_snapshots
-     WHERE ts < NOW() - ($1 || ' days')::interval`,
-    [retentionDays]
+     WHERE network = $1 AND ts < NOW() - ($2 || ' days')::interval`,
+    [activeNetwork, retentionDays]
   )
   return result.rowCount ?? 0
 }

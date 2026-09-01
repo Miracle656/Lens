@@ -17,21 +17,11 @@ import {
   nativeToScVal,
   Account,
 } from '@stellar/stellar-sdk'
-import { config } from '../../config'
-
-// Reflector oracle contract address — resolved per active network via config.
-// Set REFLECTOR_CONTRACT_ID_TESTNET / REFLECTOR_CONTRACT_ID_MAINNET (or the
-// legacy REFLECTOR_CONTRACT_ID fallback) in your environment.
-const REFLECTOR_CONTRACT_ID = config.oracle.reflectorContractId
+import { activeNetwork, getNetworkConfig, type NetworkName } from '../../config'
+import { getRpcServer } from '../../network/clients'
 
 // Ephemeral fee payer — simulation only, no real funds needed
 const FEE_PAYER = Keypair.random()
-
-let _rpc: SorobanRpc.Server | null = null
-function getRpc(): SorobanRpc.Server {
-  _rpc ??= new SorobanRpc.Server(config.rpc.url, { allowHttp: true })
-  return _rpc
-}
 
 export interface ReflectorPrice {
   asset: string
@@ -40,18 +30,27 @@ export interface ReflectorPrice {
 }
 
 /**
- * Fetch the latest price for a given asset code from the Reflector oracle.
- * Returns null when the contract is unreachable or the asset is unknown.
+ * Fetch the latest price for a given asset code from the Reflector oracle on
+ * the given network. Returns null when the contract is unreachable, the
+ * network has no Reflector deployment configured, or the asset is unknown.
  */
-export async function fetchReflectorPrice(assetCode: string): Promise<ReflectorPrice | null> {
+export async function fetchReflectorPrice(
+  assetCode: string,
+  network: NetworkName = activeNetwork
+): Promise<ReflectorPrice | null> {
+  const netConfig = getNetworkConfig(network)
+  // `oracle.enabled` already implies a non-empty reflectorContractId (config.ts),
+  // so this single check subsumes the contract-id guard.
+  if (!netConfig.oracle.enabled) return null
+
   try {
-    const rpc = getRpc()
-    const contract = new Contract(REFLECTOR_CONTRACT_ID)
+    const rpc = getRpcServer(network)
+    const contract = new Contract(netConfig.oracle.reflectorContractId)
     const account = new Account(FEE_PAYER.publicKey(), '0')
 
     const tx = new TransactionBuilder(account, {
       fee: BASE_FEE,
-      networkPassphrase: config.network.passphrase,
+      networkPassphrase: netConfig.network.passphrase,
     })
       .addOperation(
         contract.call('lastprice', nativeToScVal(assetCode, { type: 'symbol' }))
@@ -86,13 +85,16 @@ export async function fetchReflectorPrice(assetCode: string): Promise<ReflectorP
 const _cache = new Map<string, { price: number; fetchedAt: number }>()
 const CACHE_TTL_MS = 60_000
 
-export async function getCachedReflectorPrice(asset: string): Promise<number | null> {
-  const key = asset.toUpperCase()
+export async function getCachedReflectorPrice(
+  asset: string,
+  network: NetworkName = activeNetwork
+): Promise<number | null> {
+  const key = `${network}:${asset.toUpperCase()}`
   const entry = _cache.get(key)
   if (entry && Date.now() - entry.fetchedAt < CACHE_TTL_MS) {
     return entry.price
   }
-  const fresh = await fetchReflectorPrice(key)
+  const fresh = await fetchReflectorPrice(asset, network)
   if (fresh) {
     _cache.set(key, { price: fresh.price, fetchedAt: Date.now() })
     return fresh.price

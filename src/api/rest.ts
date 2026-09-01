@@ -4,7 +4,8 @@ import { getCachedPrice, setCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
-import { config } from '../config'
+import { config, getNetworkConfig, activeNetwork, type NetworkName } from '../config'
+import '../middleware/network' // declares req.network on the FastifyRequest type
 import {
   statusResponseSchema,
   priceResponseSchema,
@@ -20,11 +21,11 @@ function makePairKey(a: string, b: string): string {
   return [a, b].sort().join('/')
 }
 
-function findPair(assetA: string, assetB: string) {
+function findPair(assetA: string, assetB: string, network: NetworkName) {
   const normalize = (a: string) => a.toLowerCase() === 'native' ? 'XLM' : a.split(':')[0].toUpperCase()
   const cA = normalize(assetA)
   const cB = normalize(assetB)
-  return config.pairs.find(p => {
+  return getNetworkConfig(network).pairs.find(p => {
     const pA = p.assetA.code.toUpperCase()
     const pB = p.assetB.code.toUpperCase()
     return (cA === pA && cB === pB) || (cA === pB && cB === pA)
@@ -58,10 +59,14 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     async (req, reply) => {
       price_requests_total.inc()
       const { assetA, assetB } = req.params
-      const pair = findPair(assetA, assetB)
-      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched` })
+      const network = req.network ?? activeNetwork
+      const pair = findPair(assetA, assetB, network)
+      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched on ${network}` })
 
-      const cached = await getCachedPrice(pair.pairKey)
+      // Cache key is network-scoped so testnet/mainnet prices for the same
+      // asset codes never collide.
+      const cacheKey = `${network}:${pair.pairKey}`
+      const cached = await getCachedPrice(cacheKey)
       if (cached) {
         try {
           reply.header('X-Cache', 'HIT')
@@ -69,18 +74,22 @@ export async function registerRESTRoutes(app: FastifyInstance) {
         } catch { /* fall through */ }
       }
 
+      // NOTE: getAggregatedPrice reads price_points/price_aggregates, which
+      // have no network column yet — see getBestRoute's network param for
+      // the (currently SDEX-only) live per-network read.
       const agg = await getAggregatedPrice(pair.pairKey)
-      const route = await getBestRoute(pair.assetA, pair.assetB, pair.pairKey, 1000)
+      const route = await getBestRoute(pair.assetA, pair.assetB, pair.pairKey, 1000, network)
       const result = {
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
         pairKey: pair.pairKey,
+        network,
         ...agg,
         bestRoute: route.route,
         lastUpdated: new Date().toISOString(),
       }
 
-      await setCachedPrice(pair.pairKey, result, config.cache.priceTtl)
+      await setCachedPrice(cacheKey, result, config.cache.priceTtl)
       reply.header('X-Cache', 'MISS')
       return result
     }
@@ -96,11 +105,12 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { assetA, assetB } = req.params
       const amount = parseFloat(req.query.amount ?? '1000')
-      const pair = findPair(assetA, assetB)
-      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched` })
+      const network = req.network ?? activeNetwork
+      const pair = findPair(assetA, assetB, network)
+      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched on ${network}` })
       if (isNaN(amount) || amount <= 0) return reply.status(400).send({ error: 'amount must be a positive number' })
 
-      return getBestRoute(pair.assetA, pair.assetB, pair.pairKey, amount)
+      return getBestRoute(pair.assetA, pair.assetB, pair.pairKey, amount, network)
     }
   )
 
@@ -172,11 +182,13 @@ export async function registerRESTRoutes(app: FastifyInstance) {
     async (req, reply) => {
       const { assetA, assetB } = req.params
       const amount = parseFloat(req.query.amount ?? '1000')
-      const pair = findPair(assetA, assetB)
-      
-      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched` })
+      const network = req.network ?? activeNetwork
+      const pair = findPair(assetA, assetB, network)
+
+      if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched on ${network}` })
       if (isNaN(amount) || amount <= 0) return reply.status(400).send({ error: 'amount must be a positive number' })
 
+      // NOTE: getDepth reads order-book data with no network column yet — see L048.
       const depthResult = await getDepth(pair.pairKey, amount)
       
       return {

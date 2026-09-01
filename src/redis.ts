@@ -1,5 +1,5 @@
 import Redis from 'ioredis'
-import { config } from './config'
+import { config, activeNetwork } from './config'
 
 export const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
@@ -12,7 +12,7 @@ redis.on('error', (err) => {
 
 export async function getCachedPrice(pairKey: string): Promise<string | null> {
   try {
-    return await redis.get(`lens:price:${pairKey}`)
+    return await redis.get(`lens:${activeNetwork}:price:${pairKey}`)
   } catch {
     return null
   }
@@ -20,7 +20,7 @@ export async function getCachedPrice(pairKey: string): Promise<string | null> {
 
 export async function setCachedPrice(pairKey: string, data: object, ttlSeconds: number): Promise<void> {
   try {
-    await redis.set(`lens:price:${pairKey}`, JSON.stringify(data), 'EX', ttlSeconds)
+    await redis.set(`lens:${activeNetwork}:price:${pairKey}`, JSON.stringify(data), 'EX', ttlSeconds)
   } catch {
     // Redis cache miss is non-fatal
   }

@@ -8,13 +8,11 @@
  * Issue: #103
  */
 
-import { config } from '../../config'
+import { config, activeNetwork, getNetworkConfig, type NetworkName } from '../../config'
 import { getActivePairs } from '../../pairsRegistry'
 import { upsertPricePoints } from '../../db'
 import { dispatchPriceUpdate } from '../../webhookDispatcher'
 import type { WatchedPair } from '../../types'
-
-const AQUARIUS_AMM_API = 'https://amm.aquarius.network/api/v1/pools/'
 
 const lastPrice = new Map<string, number>()
 
@@ -28,7 +26,10 @@ interface AquariusListResponse {
   results?: AquariusPool[]
 }
 
-export async function fetchAquariusPools(pair: WatchedPair): Promise<AquariusPool[]> {
+export async function fetchAquariusPools(
+  pair: WatchedPair,
+  apiUrl: string = config.aquarius.apiUrl
+): Promise<AquariusPool[]> {
   try {
     const assetAStr = pair.assetA.issuer
       ? `${pair.assetA.code}:${pair.assetA.issuer}`
@@ -41,7 +42,7 @@ export async function fetchAquariusPools(pair: WatchedPair): Promise<AquariusPoo
     params.append('assets[]', assetAStr)
     params.append('assets[]', assetBStr)
 
-    const res = await fetch(`${AQUARIUS_AMM_API}?${params.toString()}`)
+    const res = await fetch(`${apiUrl}?${params.toString()}`)
     if (!res.ok) return []
     const data = await res.json() as AquariusListResponse
     return data.results ?? []
@@ -51,8 +52,11 @@ export async function fetchAquariusPools(pair: WatchedPair): Promise<AquariusPoo
   }
 }
 
-export async function ingestAquariusPair(pair: WatchedPair): Promise<void> {
-  const pools = await fetchAquariusPools(pair)
+export async function ingestAquariusPair(
+  pair: WatchedPair,
+  network: NetworkName = activeNetwork,
+): Promise<void> {
+  const pools = await fetchAquariusPools(pair, getNetworkConfig(network).aquarius.apiUrl)
   if (pools.length === 0) return
 
   const points = pools.flatMap(pool => {
@@ -97,11 +101,16 @@ async function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms))
 }
 
-export async function startAquariusIngester(): Promise<void> {
-  console.log(`[aquarius] Starting Aquarius AMM ingester for ${getActivePairs().length} pairs`)
+export async function startAquariusIngester(network: NetworkName = activeNetwork): Promise<void> {
+  if (!getNetworkConfig(network).aquarius.enabled) {
+    console.log(`[aquarius] Aquarius is disabled on ${network} — ingester not started`)
+    return
+  }
+
+  console.log(`[aquarius] Starting Aquarius AMM ingester for ${getActivePairs().length} pairs on ${network}`)
   while (true) {
     for (const pair of getActivePairs()) {
-      await ingestAquariusPair(pair)
+      await ingestAquariusPair(pair, network)
     }
     await sleep(config.indexer.pollIntervalMs)
   }

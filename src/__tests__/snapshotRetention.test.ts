@@ -15,6 +15,7 @@ vi.mock('bullmq', () => ({
 }))
 
 import { pruneOldSnapshots, SNAPSHOT_RETENTION_DAYS } from '../jobs/snapshotRetention'
+import { activeNetwork } from '../config'
 
 describe('pruneOldSnapshots', () => {
   beforeEach(() => {
@@ -28,9 +29,9 @@ describe('pruneOldSnapshots', () => {
 
     expect(SNAPSHOT_RETENTION_DAYS).toBe(30)
     expect(pruned).toBe(5)
-    expect(mockQuery.mock.calls[0][1]).toEqual([30])
+    expect(mockQuery.mock.calls[0][1]).toEqual([activeNetwork, 30])
     expect(mockQuery.mock.calls[0][0]).toMatch(/DELETE FROM price_snapshots/)
-    expect(mockQuery.mock.calls[0][0]).toMatch(/ts < NOW\(\) - \(\$1 \|\| ' days'\)::interval/)
+    expect(mockQuery.mock.calls[0][0]).toMatch(/ts < NOW\(\) - \(\$2 \|\| ' days'\)::interval/)
   })
 
   it('honors a custom retention window', async () => {
@@ -39,7 +40,7 @@ describe('pruneOldSnapshots', () => {
     const pruned = await pruneOldSnapshots(7)
 
     expect(pruned).toBe(0)
-    expect(mockQuery.mock.calls[0][1]).toEqual([7])
+    expect(mockQuery.mock.calls[0][1]).toEqual([activeNetwork, 7])
   })
 
   it('returns 0 when rowCount is null', async () => {

@@ -164,7 +164,8 @@ describe('ingestPair', () => {
     expect(mockFetchPools).toHaveBeenCalledWith(
       factory,
       xlmToken.address,
-      usdcToken.address
+      usdcToken.address,
+      expect.any(String)
     )
   })
 

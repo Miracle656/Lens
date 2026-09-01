@@ -18,17 +18,35 @@ export interface NetworkConfig {
     passphrase: string
   }
   soroswap: {
+    /** Whether Soroswap has a usable deployment on this network. */
+    enabled: boolean
     /** Soroswap factory contract address for this network. */
     factoryAddress: string
+    /** Soroswap token-list URL for this network. */
+    tokenListUrl: string
     /** How often to poll Soroswap pool reserves in ms. */
     pollIntervalMs: number
   }
+  aquarius: {
+    /** Whether Aquarius has a usable deployment on this network. */
+    enabled: boolean
+    /** Aquarius AMM pools API base URL for this network. */
+    apiUrl: string
+  }
   oracle: {
+    /** Whether the Reflector oracle is deployed on this network. */
+    enabled: boolean
     /** Reflector oracle contract ID for this network. */
     reflectorContractId: string
   }
   /** Watched asset pairs for this network. */
   pairs: WatchedPair[]
+  facilitator: {
+    /** Secret key for the facilitator's fee-paying account */
+    secretKey?: string
+    /** Maximum fee in stroops the facilitator will pay */
+    feeStroops: number
+  }
 }
 
 // ── Asset / pair parsing ───────────────────────────────────────────────────────
@@ -106,12 +124,33 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
       ? 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2'
       : 'CDKP5WSEZMDL53VZFPBGCL47WBPKFCN5OPYQVXB3CJWUXHPZRPHSSZ3')
 
+  // Soroswap token-list is a single canonical list covering both networks by
+  // default, but can be overridden per network (e.g. a testnet-specific list).
+  const soroswapTokenListUrl =
+    process.env[`SOROSWAP_TOKEN_LIST_URL_${suffix}`] ||
+    process.env.SOROSWAP_TOKEN_LIST_URL ||
+    'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
+
+  const soroswapEnabled =
+    (process.env[`SOROSWAP_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false'
+
   const soroswapPollMs = parseInt(
     process.env[`SOROSWAP_POLL_INTERVAL_MS_${suffix}`] ||
     process.env.SOROSWAP_POLL_INTERVAL_MS ||
     '60000',
     10
   )
+
+  // ── Aquarius ──────────────────────────────────────────────────────────────
+  // Aquarius only runs on Stellar classic mainnet today — there is no public
+  // testnet deployment, so it is disabled there by default.
+  const aquariusApiUrl =
+    process.env[`AQUARIUS_API_URL_${suffix}`] ||
+    process.env.AQUARIUS_API_URL ||
+    'https://amm.aquarius.network/api/v1/pools/'
+
+  const aquariusEnabled =
+    (process.env[`AQUARIUS_ENABLED_${suffix}`] ?? (network === 'mainnet' ? 'true' : 'false')).toLowerCase() !== 'false'
 
   // ── Reflector oracle ──────────────────────────────────────────────────────
   const reflectorContractId =
@@ -121,22 +160,45 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
       ? 'CCYXZMNHFXHKF3YEX4VJJ5TH3YHCVZIBPNBGM7C4PJIMCIMNNWDOQYA'
       : '')
 
+  const oracleEnabled =
+    (process.env[`REFLECTOR_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false' &&
+    reflectorContractId !== ''
+
   // ── Watched pairs ─────────────────────────────────────────────────────────
   const rawPairs =
     process.env[`WATCHED_PAIRS_${suffix}`] ||
     (network === 'testnet' ? process.env.WATCHED_PAIRS : undefined) ||
     ''
 
+  // ── Facilitator ───────────────────────────────────────────────────────────
+  const facilitatorSecretKey =
+    process.env[`FACILITATOR_SECRET_KEY_${suffix}`] ||
+    (network === 'testnet' ? process.env.FACILITATOR_SECRET_KEY : undefined)
+
+  const facilitatorFeeStroops = parseInt(
+    process.env[`FACILITATOR_FEE_STROOPS_${suffix}`] ||
+    process.env.FACILITATOR_FEE_STROOPS ||
+    '50000',
+    10
+  )
+
   return {
     horizon: { url: horizonUrl },
     rpc: { url: rpcUrl },
     network: { passphrase },
     soroswap: {
+      enabled: soroswapEnabled,
       factoryAddress: soroswapFactory,
+      tokenListUrl: soroswapTokenListUrl,
       pollIntervalMs: soroswapPollMs,
     },
-    oracle: { reflectorContractId },
+    aquarius: {
+      enabled: aquariusEnabled,
+      apiUrl: aquariusApiUrl,
+    },
+    oracle: { enabled: oracleEnabled, reflectorContractId },
     pairs: parseWatchedPairs(rawPairs),
+    facilitator: { secretKey: facilitatorSecretKey, feeStroops: facilitatorFeeStroops },
   }
 }
 
@@ -229,8 +291,10 @@ export const config = {
   get rpc()      { return resolveNetwork(activeNetwork).rpc },
   get network()  { return resolveNetwork(activeNetwork).network },
   get soroswap() { return resolveNetwork(activeNetwork).soroswap },
+  get aquarius() { return resolveNetwork(activeNetwork).aquarius },
   get oracle()   { return resolveNetwork(activeNetwork).oracle },
   get pairs()    { return resolveNetwork(activeNetwork).pairs },
+  get facilitator() { return resolveNetwork(activeNetwork).facilitator },
 
   // ── Global / network-agnostic ──────────────────────────────────────────────
   db:      globalConfig.db,

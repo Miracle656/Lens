@@ -1,11 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { x402_payments_received_total } from '../metrics'
 import { checkQuota, recordUsage, parseCents, getQuotaConfig } from '../x402/metering'
+import { X402_NETWORK_LABEL, paymentAddressFor, isX402Configured, getX402ResourceServer } from '../x402/network'
 import fp from 'fastify-plugin'
-// @ts-ignore — @x402 packages ship ESM-only types incompatible with commonjs moduleResolution
-import { x402ResourceServer, HTTPFacilitatorClient } from '@x402/core/server'
-// @ts-ignore
-import { ExactStellarScheme } from '@x402/stellar/exact/server'
+import './network' // declares req.network on the FastifyRequest type
 
 // Routes gated by x402 and their prices
 const GATED_ROUTES: Record<string, { price: string; description: string }> = {
@@ -21,20 +19,13 @@ const GATED_ROUTES: Record<string, { price: string; description: string }> = {
  */
 async function x402Plugin(app: FastifyInstance) {
   // Read at plugin init time (not module load) so tests can inject env vars before app.register()
-  const PAYMENT_ADDRESS = process.env.ORACLE_PAYMENT_ADDRESS
-  const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.stellar.org'
-  const NETWORK = (process.env.STELLAR_NETWORK === 'mainnet' ? 'stellar:pubnet' : 'stellar:testnet') as string
+  const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://x402.org/facilitator'
 
-  if (!PAYMENT_ADDRESS) {
+  if (!isX402Configured()) {
     app.log.warn('[oracle] ORACLE_PAYMENT_ADDRESS not set — x402 gating disabled')
     return
   }
 
-  const facilitatorClient = new HTTPFacilitatorClient({ url: FACILITATOR_URL })
-  const resourceServer: any = new x402ResourceServer(facilitatorClient)
-    .register(NETWORK as `${string}:${string}`, new ExactStellarScheme())
-
-  await resourceServer.initialize()
   app.log.info('[oracle] x402 payment gating enabled')
 
   app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -46,14 +37,23 @@ async function x402Plugin(app: FastifyInstance) {
     })
     if (!matchedRoute) return
 
+    // Falls back to testnet when the network selector plugin isn't
+    // registered (e.g. isolated unit tests that build the app directly).
+    const network = req.network ?? 'testnet'
+    const paymentAddress = paymentAddressFor(network)
+    if (!paymentAddress) {
+      reply.status(402).send({ error: `x402 payments are not configured for network "${network}"` })
+      return
+    }
+
     const { price, description } = GATED_ROUTES[matchedRoute]
     const paymentHeader = req.headers['x-payment'] as string | undefined
 
     const requirements = {
       scheme: 'exact' as const,
       price,
-      network: NETWORK,
-      payTo: PAYMENT_ADDRESS,
+      network: X402_NETWORK_LABEL[network],
+      payTo: paymentAddress,
     }
 
     // No payment header — return 402 with requirements
@@ -76,6 +76,7 @@ async function x402Plugin(app: FastifyInstance) {
         payload = JSON.parse(paymentHeader)
       }
 
+      const resourceServer = await getX402ResourceServer(network, FACILITATOR_URL)
       const result = await resourceServer.verify(payload, requirements)
       if (!result.isValid) {
         reply.status(402).send({ error: 'Payment invalid', reason: result.invalidReason })

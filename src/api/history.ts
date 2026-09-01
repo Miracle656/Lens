@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { pgPool } from '../db'
+import { activeNetwork } from '../config'
 
 /** Supported aggregation intervals → bucket width in seconds. */
 export const HISTORY_INTERVAL_SECONDS: Record<string, number> = {
@@ -37,12 +38,12 @@ export async function queryHistory(
        (array_agg(price::float ORDER BY ts DESC))[1] AS price,
        SUM(volume::float) AS volume
      FROM price_snapshots
-     WHERE pair = $2
+     WHERE pair = $2 AND network = $5
        AND ts >= $3
        AND ts <= $4
      GROUP BY floor(EXTRACT(EPOCH FROM ts) / $1)
      ORDER BY bucket ASC`,
-    [intervalSecs, pair, from, to]
+    [intervalSecs, pair, from, to, activeNetwork]
   )
 
   return result.rows.map(r => ({
