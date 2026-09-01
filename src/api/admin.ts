@@ -30,6 +30,9 @@ interface CreateKeyBody {
   label?: string
   ratePerMin?: number
   ratePerDay?: number
+  monthlyQuotaCents?: number
+  dailyQuotaCents?: number
+  overagePolicy?: 'block' | 'charge_402' | 'allow_overage'
 }
 
 /**
@@ -53,7 +56,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         })
       }
 
-      const { label, ratePerMin, ratePerDay } = req.body ?? {}
+      const { label, ratePerMin, ratePerDay, monthlyQuotaCents, dailyQuotaCents, overagePolicy } = req.body ?? {}
       if (!label || typeof label !== 'string' || label.trim().length === 0) {
         return reply.status(400).send({ error: 'label is required' })
       }
@@ -66,6 +69,9 @@ export async function registerAdminRoutes(app: FastifyInstance) {
           label: label.trim(),
           ...(ratePerMin !== undefined ? { ratePerMin } : {}),
           ...(ratePerDay !== undefined ? { ratePerDay } : {}),
+          ...(monthlyQuotaCents !== undefined ? { monthlyQuotaCents } : {}),
+          ...(dailyQuotaCents !== undefined ? { dailyQuotaCents } : {}),
+          ...(overagePolicy !== undefined ? { overagePolicy } : {}),
         },
       })
 
@@ -74,7 +80,9 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         label: record.label,
         ratePerMin: record.ratePerMin,
         ratePerDay: record.ratePerDay,
-        // The plaintext key is shown only at creation time and never stored.
+        monthlyQuotaCents: record.monthlyQuotaCents,
+        dailyQuotaCents: record.dailyQuotaCents,
+        overagePolicy: record.overagePolicy,
         key: plaintext,
         createdAt: record.createdAt,
       })

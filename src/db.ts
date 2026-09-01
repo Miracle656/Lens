@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { Pool } from 'pg'
 import { db_query_duration_seconds } from './metrics'
-import { config } from './config'
+import { config, activeNetwork } from './config'
 
 // Prisma for schema management + simple queries
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
@@ -37,6 +37,7 @@ export async function upsertPricePoints(points: {
   if (points.length === 0) return 0
   const result = await prisma.pricePoint.createMany({
     data: points.map(p => ({
+      network: activeNetwork,
       assetA: p.assetA,
       assetB: p.assetB,
       pairKey: p.pairKey,
@@ -55,14 +56,14 @@ export async function upsertPricePoints(points: {
 }
 
 export async function getIndexerCursor(id: string): Promise<string | null> {
-  const state = await prisma.indexerState.findUnique({ where: { id } })
+  const state = await prisma.indexerState.findUnique({ where: { network_id: { network: activeNetwork, id } } })
   return state?.lastCursor ?? null
 }
 
 export async function setIndexerCursor(id: string, cursor: string, ledger?: number): Promise<void> {
   await prisma.indexerState.upsert({
-    where: { id },
-    create: { id, lastCursor: cursor, lastLedger: ledger, lastProcessedAt: new Date() },
+    where: { network_id: { network: activeNetwork, id } },
+    create: { id, network: activeNetwork, lastCursor: cursor, lastLedger: ledger, lastProcessedAt: new Date() },
     update: { lastCursor: cursor, lastLedger: ledger, lastProcessedAt: new Date() },
   })
 }

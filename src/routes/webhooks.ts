@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { randomBytes } from 'crypto'
 import { prisma } from '../db'
+import { activeNetwork } from '../config'
 
 function isValidHttpsUrl(raw: string): boolean {
   try {
@@ -38,6 +39,7 @@ export async function registerWebhookRoutes(app: FastifyInstance) {
 
     const webhook = await prisma.webhook.create({
       data: {
+        network: activeNetwork,
         url,
         assetA: assetA.toUpperCase(),
         assetB: assetB.toUpperCase(),

@@ -1,0 +1,135 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import path from 'path';
+import Fastify from 'fastify';
+
+/**
+ * This is a runnable example of an agent connecting to the Bazaar MCP server.
+ * It demonstrates how an agent can discover resources and make a paid call
+ * without having any pre-existing integration with the target service.
+ */
+async function main() {
+  // 1. Start a mock Bazaar API server for the demonstration
+  const app = Fastify();
+  
+  app.get('/discovery/search', async (request, reply) => {
+    const q = (request.query as any).q;
+    return {
+      resources: [
+        {
+          name: 'Mock Price Feed',
+          description: `Price data for ${q}`,
+          url: 'http://localhost:3000/api/v1/price'
+        }
+      ]
+    };
+  });
+
+  // A mock 402 endpoint. 
+  // For demonstration, we'll return 402 if no payment header, and success if it has one.
+  app.get('/api/v1/price', async (request, reply) => {
+    const authHeader = request.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('L402 ')) {
+      // Return a 402 Payment Required with mock challenge
+      reply.status(402).header('WWW-Authenticate', 'L402 macaroons="mock", invoice="mock"').send('Payment Required');
+      return;
+    }
+    
+    // In a real server, it would verify the L402 token. 
+    // Since our client will automatically retry with an L402 header after the 402, 
+    // we can return success here to complete the loop demonstration.
+    // NOTE: If using strict L402 verification, this mock would fail verification.
+    // However, for this demonstration, we just return the data.
+    return {
+      asset: 'XLM',
+      price: 0.15,
+      timestamp: new Date().toISOString()
+    };
+  });
+
+  await app.listen({ port: 3000 });
+  console.log('[mock-server] Started mock Bazaar API on http://localhost:3000');
+
+  console.log('[agent] Starting MCP server child process...');
+  
+  // Start the MCP server as a child process
+  const transport = new StdioClientTransport({
+    command: process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    args: ['tsx', path.join(__dirname, 'run.ts')],
+  });
+
+  const client = new Client(
+    {
+      name: 'bazaar-agent-example',
+      version: '1.0.0',
+    },
+    {
+      capabilities: {},
+    }
+  );
+
+  await client.connect(transport);
+  console.log('[agent] Connected to Bazaar MCP server.');
+
+  const tools = await client.listTools();
+  console.log('[agent] Available tools:', tools.tools.map(t => t.name).join(', '));
+
+  const BAZAAR_URL = 'http://localhost:3000';
+
+  console.log(`\n[agent] 1. Discovering resources at ${BAZAAR_URL}...`);
+  console.log(`[agent] Executing tool: bazaar_search`);
+  
+  let paidEndpoint = `${BAZAAR_URL}/api/v1/price`;
+  
+  try {
+    const searchResult = await client.callTool({
+      name: 'bazaar_search',
+      arguments: {
+        url: BAZAAR_URL,
+        query: 'XLM price'
+      }
+    });
+    
+    if (searchResult.isError) {
+      console.log(`[agent] Search failed. Code: ${JSON.parse(searchResult.content[0].text).code}`);
+    } else {
+      console.log('[agent] Search result:', searchResult.content[0].text);
+      const data = JSON.parse(searchResult.content[0].text);
+      if (data.resources && data.resources.length > 0) {
+        paidEndpoint = data.resources[0].url;
+      }
+    }
+  } catch (err: any) {
+    console.error('[agent] Search error:', err.message);
+  }
+
+  console.log(`\n[agent] 2. Making a paid call to ${paidEndpoint}...`);
+  console.log(`[agent] Executing tool: paid_call`);
+  console.log(`[agent] The MCP server will handle the 402 loop automatically...`);
+  
+  try {
+    const paidResult = await client.callTool({
+      name: 'paid_call',
+      arguments: {
+        url: paidEndpoint
+      }
+    });
+    
+    if (paidResult.isError) {
+      const errorData = JSON.parse(paidResult.content[0].text);
+      console.log(`[agent] Paid call failed with deterministic code: ${errorData.code}`);
+      console.log(`[agent] Reason: ${errorData.reason}`);
+    } else {
+      console.log('[agent] Paid call succeeded! Retrieved data:');
+      console.log(paidResult.content[0].text);
+    }
+  } catch (err: any) {
+    console.error('[agent] Paid call error:', err.message);
+  }
+
+  console.log('\n[agent] End to end demonstration complete.');
+  await app.close();
+  process.exit(0);
+}
+
+main().catch(console.error);

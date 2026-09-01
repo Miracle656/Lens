@@ -1,16 +1,13 @@
-import { Horizon } from '@stellar/stellar-sdk'
 import { amm_snapshots_total, trades_ingested_total, last_trade_timestamp } from '../metrics'
-import { config } from '../config'
+import { config, activeNetwork, getNetworkConfig, type NetworkName } from '../config'
 import { getActivePairs } from '../pairsRegistry'
 import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import type { WatchedPair } from '../types'
 
-const horizonServer = new Horizon.Server(config.horizon.url)
-
 const lastPrice = new Map<string, number>()
 
-export async function fetchPools(pair: WatchedPair): Promise<any[]> {
+export async function fetchPools(pair: WatchedPair, network: NetworkName = activeNetwork): Promise<any[]> {
   try {
     // Use Horizon's reserves filter to find pools for this specific pair
     const assetAStr = pair.assetA.issuer
@@ -26,7 +23,7 @@ export async function fetchPools(pair: WatchedPair): Promise<any[]> {
     params.set('limit', '10')
 
     const response = await fetch(
-      `${config.horizon.url}/liquidity_pools?${params.toString()}`
+      `${getNetworkConfig(network).horizon.url}/liquidity_pools?${params.toString()}`
     )
     const data = await response.json() as any
     if (!data._embedded?.records) return []
@@ -52,6 +49,7 @@ export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> 
 
     await prisma.poolSnapshot.create({
       data: {
+        network: activeNetwork,
         poolId: pool.id,
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
@@ -97,13 +95,17 @@ export async function snapshotPool(pool: any, pair: WatchedPair): Promise<void> 
   }
 }
 
-export async function ingestPoolTrades(pool: any, pair: WatchedPair): Promise<void> {
-  const stateId = `amm:${pool.id}`
+export async function ingestPoolTrades(
+  pool: any,
+  pair: WatchedPair,
+  network: NetworkName = activeNetwork
+): Promise<void> {
+  const stateId = `amm:${network}:${pool.id}`
   const cursor = await getIndexerCursor(stateId) ?? '0'
 
   try {
     const response = await fetch(
-      `${config.horizon.url}/liquidity_pools/${pool.id}/trades?cursor=${cursor}&limit=${config.indexer.ammPageSize}&order=asc`
+      `${getNetworkConfig(network).horizon.url}/liquidity_pools/${pool.id}/trades?cursor=${cursor}&limit=${config.indexer.ammPageSize}&order=asc`
     )
     const data = await response.json() as any
     const records = data._embedded?.records ?? []
@@ -161,17 +163,17 @@ async function sleep(ms: number) {
   return new Promise(r => setTimeout(r, ms))
 }
 
-export async function startAMMIngester(): Promise<void> {
-  console.log(`[amm] Starting AMM ingester for ${getActivePairs().length} pairs`)
+export async function startAMMIngester(network: NetworkName = activeNetwork): Promise<void> {
+  console.log(`[amm] Starting AMM ingester for ${getActivePairs().length} pairs on ${network}`)
 
   while (true) {
     for (const pair of getActivePairs()) {
-      const pools = await fetchPools(pair)
+      const pools = await fetchPools(pair, network)
       console.log(`[amm] ${pair.pairKey}: found ${pools.length} AMM pools`)
 
       await Promise.all(pools.map(async pool => {
         await snapshotPool(pool, pair)
-        await ingestPoolTrades(pool, pair)
+        await ingestPoolTrades(pool, pair, network)
       }))
     }
     await sleep(config.indexer.pollIntervalMs)

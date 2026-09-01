@@ -39,6 +39,7 @@ export const priceResponseSchema = {
     'assetA',
     'assetB',
     'pairKey',
+    'network',
     'price',
     'sdexPrice',
     'ammPrice',
@@ -62,6 +63,7 @@ export const priceResponseSchema = {
     assetA: { type: 'string' },
     assetB: { type: 'string' },
     pairKey: { type: 'string' },
+    network: { type: 'string', enum: ['testnet', 'mainnet'] },
     price: { type: 'number' },
     sdexPrice: { type: 'number' },
     ammPrice: { type: 'number' },
@@ -172,6 +174,77 @@ export const poolsResponseSchema = {
           spot_price: { type: ['number', 'null'] },
           fee_bp: { type: ['integer', 'null'] },
         },
+      },
+    },
+  },
+} as const
+
+export const depthResponseSchema = {
+  type: 'object',
+  required: ['assetA', 'assetB', 'pairKey', 'spotPrice', 'executionPrice', 'slippagePct', 'asks', 'bids', 'source'],
+  additionalProperties: false,
+  properties: {
+    assetA: { type: 'string' },
+    assetB: { type: 'string' },
+    pairKey: { type: 'string' },
+    spotPrice: { type: 'number' },
+    executionPrice: { type: 'number' },
+    slippagePct: { type: 'number' },
+    asks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['price', 'size'],
+        additionalProperties: false,
+        properties: {
+          price: { type: 'number' },
+          size: { type: 'number' },
+        },
+      },
+    },
+    bids: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['price', 'size'],
+        additionalProperties: false,
+        properties: {
+          price: { type: 'number' },
+          size: { type: 'number' },
+        },
+      },
+    },
+    source: { type: 'string', enum: ['AMM', 'SDEX', 'BOTH'] },
+  },
+} as const
+
+/** GET /benchmark/:asset */
+export const benchmarkResponseSchema = {
+  type: 'object',
+  required: ['asset', 'target', 'pairKey', 'currentPrice', 'currentDeviationBp', 'rolling24h'],
+  additionalProperties: false,
+  properties: {
+    asset: { type: 'string' },
+    target: { type: 'string' },
+    pairKey: { type: 'string' },
+    currentPrice: { type: ['number', 'null'] },
+    currentDeviationBp: { type: ['number', 'null'] },
+    rolling24h: {
+      type: 'object',
+      required: [
+        'maxDeviationBp',
+        'minDeviationBp',
+        'maxAbsoluteDeviationBp',
+        'averageDeviationBp',
+        'sampleCount',
+      ],
+      additionalProperties: false,
+      properties: {
+        maxDeviationBp: { type: ['number', 'null'] },
+        minDeviationBp: { type: ['number', 'null'] },
+        maxAbsoluteDeviationBp: { type: ['number', 'null'] },
+        averageDeviationBp: { type: ['number', 'null'] },
+        sampleCount: { type: 'integer' },
       },
     },
   },

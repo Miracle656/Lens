@@ -1,11 +1,11 @@
 import { Queue, Worker } from 'bullmq'
-import { config } from '../config'
+import { config, activeNetwork } from '../config'
 import { pgPool, prisma } from '../db'
 import { setCachedPrice } from '../redis'
 import { calculateVWAP, calculateOHLCV, getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 
-const QUEUE_NAME = 'aggregate-refresh'
+const QUEUE_NAME = `${activeNetwork}:aggregate-refresh`
 
 function redisConnection() {
   const url = process.env.REDIS_URL
@@ -60,9 +60,9 @@ export function startAggregateWorker() {
           if (vwap === 0) continue
 
           await prisma.priceAggregate.upsert({
-            where: { pairKey_window_bucket: { pairKey, window: w.key, bucket } },
+            where: { network_pairKey_window_bucket: { network: activeNetwork, pairKey, window: w.key, bucket } },
             create: {
-              pairKey, window: w.key, bucket,
+              network: activeNetwork, pairKey, window: w.key, bucket,
               vwap, sdexVwap: sdexVwap || null, ammVwap: ammVwap || null,
               volume: ohlcv.volume, tradeCount: ohlcv.tradeCount,
               openPrice: ohlcv.open || null, closePrice: ohlcv.close || null,

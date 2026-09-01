@@ -213,7 +213,7 @@ describe('admin endpoints', () => {
 
   it('mints a key and returns the plaintext once (stored as hash only)', async () => {
     mockCreate.mockImplementation(async ({ data }: any) => ({
-      id: 'new-id', createdAt: new Date(), ratePerMin: 60, ratePerDay: 10000, ...data,
+      id: 'new-id', createdAt: new Date(), ratePerMin: 60, ratePerDay: 10000, monthlyQuotaCents: 10000, dailyQuotaCents: 500, overagePolicy: 'block', ...data,
     }))
     const app = await buildAdminApp()
     const res = await app.inject({
@@ -226,10 +226,27 @@ describe('admin endpoints', () => {
     const body = res.json()
     expect(body.key).toMatch(/^lens_[a-f0-9]{48}$/)
     expect(body.label).toBe('acme')
-    // What got persisted is the HASH of the returned key, not the key itself.
     const stored = mockCreate.mock.calls[0][0].data
     expect(stored.hash).toBe(sha256(body.key))
     expect(stored.hash).not.toBe(body.key)
+  })
+
+  it('accepts quota configuration on key creation', async () => {
+    mockCreate.mockImplementation(async ({ data }: any) => ({
+      id: 'new-id', createdAt: new Date(), ratePerMin: 60, ratePerDay: 10000, ...data,
+    }))
+    const app = await buildAdminApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/keys',
+      headers: { 'x-admin-token': 'admin-secret' },
+      payload: { label: 'acme', monthlyQuotaCents: 20000, dailyQuotaCents: 1000, overagePolicy: 'allow_overage' },
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json()
+    expect(body.monthlyQuotaCents).toBe(20000)
+    expect(body.dailyQuotaCents).toBe(1000)
+    expect(body.overagePolicy).toBe('allow_overage')
   })
 
   it('revokes a key by id', async () => {

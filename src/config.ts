@@ -1,5 +1,55 @@
 import 'dotenv/config'
+import { Networks } from '@stellar/stellar-sdk'
 import type { WatchedPair, AssetId } from './types'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export type NetworkName = 'testnet' | 'mainnet'
+
+/** Per-network configuration block. */
+export interface NetworkConfig {
+  horizon: {
+    url: string
+  }
+  rpc: {
+    url: string
+  }
+  network: {
+    passphrase: string
+  }
+  soroswap: {
+    /** Whether Soroswap has a usable deployment on this network. */
+    enabled: boolean
+    /** Soroswap factory contract address for this network. */
+    factoryAddress: string
+    /** Soroswap token-list URL for this network. */
+    tokenListUrl: string
+    /** How often to poll Soroswap pool reserves in ms. */
+    pollIntervalMs: number
+  }
+  aquarius: {
+    /** Whether Aquarius has a usable deployment on this network. */
+    enabled: boolean
+    /** Aquarius AMM pools API base URL for this network. */
+    apiUrl: string
+  }
+  oracle: {
+    /** Whether the Reflector oracle is deployed on this network. */
+    enabled: boolean
+    /** Reflector oracle contract ID for this network. */
+    reflectorContractId: string
+  }
+  /** Watched asset pairs for this network. */
+  pairs: WatchedPair[]
+  facilitator: {
+    /** Secret key for the facilitator's fee-paying account */
+    secretKey?: string
+    /** Maximum fee in stroops the facilitator will pay */
+    feeStroops: number
+  }
+}
+
+// ── Asset / pair parsing ───────────────────────────────────────────────────────
 
 function parseAsset(str: string): AssetId {
   const [code, issuer] = str.split(':')
@@ -16,28 +66,145 @@ function makePairKey(a: AssetId, b: AssetId): string {
   return [aStr, bStr].sort().join('/')
 }
 
-function parseWatchedPairs(): WatchedPair[] {
-  const raw = process.env.WATCHED_PAIRS ?? ''
+function parseWatchedPairs(raw: string): WatchedPair[] {
   if (!raw.trim()) return []
   return raw.split(',').map(pair => {
     const [a, b] = pair.trim().split('/')
-    if (!a || !b) throw new Error(`Invalid pair format: ${pair}. Expected "CODE:ISSUER/CODE:ISSUER"`)
+    if (!a || !b) {
+      throw new Error(
+        `Invalid pair format: "${pair}". Expected "CODE:ISSUER/CODE:ISSUER"`
+      )
+    }
     const assetA = parseAsset(a)
     const assetB = parseAsset(b)
     return { assetA, assetB, pairKey: makePairKey(assetA, assetB) }
   })
 }
 
-export const config = {
-  horizon: {
-    url: process.env.HORIZON_URL ?? 'https://horizon-testnet.stellar.org',
-  },
-  rpc: {
-    url: process.env.RPC_URL ?? 'https://soroban-testnet.stellar.org',
-  },
-  network: {
-    passphrase: process.env.NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015',
-  },
+// ── Per-network config builder ────────────────────────────────────────────────
+
+/**
+ * Build a NetworkConfig for the given network name.
+ *
+ * Resolution order for each field (first value that is non-empty wins):
+ *   1. Paired env var  — e.g. HORIZON_URL_TESTNET / HORIZON_URL_MAINNET
+ *   2. Generic env var — e.g. HORIZON_URL   (back-compat with single-network setups)
+ *   3. Sensible default for that network
+ */
+function buildNetworkConfig(network: NetworkName): NetworkConfig {
+  const suffix = network.toUpperCase() as 'TESTNET' | 'MAINNET'
+
+  // ── Horizon ──────────────────────────────────────────────────────────────
+  const horizonUrl =
+    process.env[`HORIZON_URL_${suffix}`] ||
+    (network === 'testnet' ? process.env.HORIZON_URL : undefined) ||
+    (network === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org')
+
+  // ── Soroban RPC ───────────────────────────────────────────────────────────
+  const rpcUrl =
+    process.env[`RPC_URL_${suffix}`] ||
+    (network === 'testnet' ? process.env.RPC_URL : undefined) ||
+    (network === 'mainnet'
+      ? 'https://mainnet.sorobanrpc.com'
+      : 'https://soroban-testnet.stellar.org')
+
+  // ── Network passphrase ────────────────────────────────────────────────────
+  const passphrase =
+    process.env[`NETWORK_PASSPHRASE_${suffix}`] ||
+    (network === 'testnet' ? process.env.NETWORK_PASSPHRASE : undefined) ||
+    (network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET)
+
+  // ── Soroswap factory ──────────────────────────────────────────────────────
+  const soroswapFactory =
+    process.env[`SOROSWAP_FACTORY_ADDRESS_${suffix}`] ||
+    process.env.SOROSWAP_FACTORY_ADDRESS ||
+    (network === 'mainnet'
+      ? 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2'
+      : 'CDKP5WSEZMDL53VZFPBGCL47WBPKFCN5OPYQVXB3CJWUXHPZRPHSSZ3')
+
+  // Soroswap token-list is a single canonical list covering both networks by
+  // default, but can be overridden per network (e.g. a testnet-specific list).
+  const soroswapTokenListUrl =
+    process.env[`SOROSWAP_TOKEN_LIST_URL_${suffix}`] ||
+    process.env.SOROSWAP_TOKEN_LIST_URL ||
+    'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
+
+  const soroswapEnabled =
+    (process.env[`SOROSWAP_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false'
+
+  const soroswapPollMs = parseInt(
+    process.env[`SOROSWAP_POLL_INTERVAL_MS_${suffix}`] ||
+    process.env.SOROSWAP_POLL_INTERVAL_MS ||
+    '60000',
+    10
+  )
+
+  // ── Aquarius ──────────────────────────────────────────────────────────────
+  // Aquarius only runs on Stellar classic mainnet today — there is no public
+  // testnet deployment, so it is disabled there by default.
+  const aquariusApiUrl =
+    process.env[`AQUARIUS_API_URL_${suffix}`] ||
+    process.env.AQUARIUS_API_URL ||
+    'https://amm.aquarius.network/api/v1/pools/'
+
+  const aquariusEnabled =
+    (process.env[`AQUARIUS_ENABLED_${suffix}`] ?? (network === 'mainnet' ? 'true' : 'false')).toLowerCase() !== 'false'
+
+  // ── Reflector oracle ──────────────────────────────────────────────────────
+  const reflectorContractId =
+    process.env[`REFLECTOR_CONTRACT_ID_${suffix}`] ||
+    process.env.REFLECTOR_CONTRACT_ID ||
+    (network === 'mainnet'
+      ? 'CCYXZMNHFXHKF3YEX4VJJ5TH3YHCVZIBPNBGM7C4PJIMCIMNNWDOQYA'
+      : '')
+
+  const oracleEnabled =
+    (process.env[`REFLECTOR_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false' &&
+    reflectorContractId !== ''
+
+  // ── Watched pairs ─────────────────────────────────────────────────────────
+  const rawPairs =
+    process.env[`WATCHED_PAIRS_${suffix}`] ||
+    (network === 'testnet' ? process.env.WATCHED_PAIRS : undefined) ||
+    ''
+
+  // ── Facilitator ───────────────────────────────────────────────────────────
+  const facilitatorSecretKey =
+    process.env[`FACILITATOR_SECRET_KEY_${suffix}`] ||
+    (network === 'testnet' ? process.env.FACILITATOR_SECRET_KEY : undefined)
+
+  const facilitatorFeeStroops = parseInt(
+    process.env[`FACILITATOR_FEE_STROOPS_${suffix}`] ||
+    process.env.FACILITATOR_FEE_STROOPS ||
+    '50000',
+    10
+  )
+
+  return {
+    horizon: { url: horizonUrl },
+    rpc: { url: rpcUrl },
+    network: { passphrase },
+    soroswap: {
+      enabled: soroswapEnabled,
+      factoryAddress: soroswapFactory,
+      tokenListUrl: soroswapTokenListUrl,
+      pollIntervalMs: soroswapPollMs,
+    },
+    aquarius: {
+      enabled: aquariusEnabled,
+      apiUrl: aquariusApiUrl,
+    },
+    oracle: { enabled: oracleEnabled, reflectorContractId },
+    pairs: parseWatchedPairs(rawPairs),
+    facilitator: { secretKey: facilitatorSecretKey, feeStroops: facilitatorFeeStroops },
+  }
+}
+
+// ── Global (non-network-specific) config ──────────────────────────────────────
+
+const globalConfig = {
   db: {
     url: process.env.DATABASE_URL ?? 'postgresql://lens:lens@localhost:5432/lens',
   },
@@ -56,17 +223,83 @@ export const config = {
   cache: {
     priceTtl: parseInt(process.env.PRICE_CACHE_TTL ?? '10', 10),
   },
-  // ── Soroswap AMM Ingester ──────────────────────────────────────────────────
-  soroswap: {
-    /** Mainnet Soroswap factory contract address */
-    factoryAddress:
-      process.env.SOROSWAP_FACTORY_ADDRESS ??
-      'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2',
-    /** Poll interval in ms (default 60s, aligned with classic AMM ingester) */
-    pollIntervalMs: parseInt(
-      process.env.SOROSWAP_POLL_INTERVAL_MS ?? '60000',
-      10
-    ),
-  },
-  pairs: parseWatchedPairs(),
 } as const
+
+// ── Per-network map ───────────────────────────────────────────────────────────
+
+/**
+ * `config.networks` holds a fully-resolved config block for each Stellar
+ * network.  Each block is built lazily on first access so startup cost stays
+ * minimal when only one network is active.
+ */
+const _networkCache = new Map<NetworkName, NetworkConfig>()
+
+function resolveNetwork(name: NetworkName): NetworkConfig {
+  const cached = _networkCache.get(name)
+  if (cached) return cached
+  const built = buildNetworkConfig(name)
+  _networkCache.set(name, built)
+  return built
+}
+
+/**
+ * Return the fully-resolved config for a given network.
+ *
+ * @example
+ * const { horizon, rpc, soroswap } = getNetworkConfig('mainnet')
+ */
+export function getNetworkConfig(network: NetworkName): NetworkConfig {
+  return resolveNetwork(network)
+}
+
+// ── Active network ────────────────────────────────────────────────────────────
+
+/**
+ * The active network, driven by the `STELLAR_NETWORK` env var.
+ * Falls back to `'testnet'` when unset so local dev always works.
+ */
+export const activeNetwork: NetworkName =
+  (process.env.STELLAR_NETWORK?.toLowerCase() as NetworkName | undefined) === 'mainnet'
+    ? 'mainnet'
+    : 'testnet'
+
+// ── Unified config export ─────────────────────────────────────────────────────
+
+/**
+ * The main config export consumed throughout the app.
+ *
+ * - `config.networks.testnet` / `config.networks.mainnet` — per-network blocks
+ * - `config.network`  — shorthand for the currently-active network block
+ *                       (driven by `STELLAR_NETWORK` env var; defaults to testnet)
+ * - All other top-level keys (`db`, `redis`, `api`, `indexer`, `cache`) are
+ *   network-agnostic and shared across both networks.
+ *
+ * Back-compat: any existing code that reads `config.horizon.url`,
+ * `config.rpc.url`, `config.network.passphrase`, `config.soroswap.*`, or
+ * `config.pairs` continues to work — those paths now proxy to the active
+ * network's block.
+ */
+export const config = {
+  // ── Network map ────────────────────────────────────────────────────────────
+  networks: {
+    get testnet(): NetworkConfig { return resolveNetwork('testnet') },
+    get mainnet(): NetworkConfig { return resolveNetwork('mainnet') },
+  },
+
+  // ── Active-network shortcuts (back-compat) ─────────────────────────────────
+  get horizon()  { return resolveNetwork(activeNetwork).horizon },
+  get rpc()      { return resolveNetwork(activeNetwork).rpc },
+  get network()  { return resolveNetwork(activeNetwork).network },
+  get soroswap() { return resolveNetwork(activeNetwork).soroswap },
+  get aquarius() { return resolveNetwork(activeNetwork).aquarius },
+  get oracle()   { return resolveNetwork(activeNetwork).oracle },
+  get pairs()    { return resolveNetwork(activeNetwork).pairs },
+  get facilitator() { return resolveNetwork(activeNetwork).facilitator },
+
+  // ── Global / network-agnostic ──────────────────────────────────────────────
+  db:      globalConfig.db,
+  redis:   globalConfig.redis,
+  api:     globalConfig.api,
+  indexer: globalConfig.indexer,
+  cache:   globalConfig.cache,
+}

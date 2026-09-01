@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest'
-import { getBestRoute } from '../aggregator/bestRoute'
+import { getBestRoute, _resetHorizonServers } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
 import * as StellarSdk from '@stellar/stellar-sdk'
 
@@ -10,9 +10,11 @@ vi.mock('../db', () => ({
   }
 }))
 
-vi.mock('@stellar/stellar-sdk', () => {
+vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>()
   const callFn = vi.fn()
   return {
+    ...actual,
     Horizon: {
       Server: vi.fn(function() {
         return {
@@ -25,6 +27,13 @@ vi.mock('@stellar/stellar-sdk', () => {
       vi.fn(function(code, issuer) { return { code, issuer } }),
       { native: vi.fn(() => 'native') }
     ),
+    // config.ts's buildNetworkConfig() falls back to these when no
+    // NETWORK_PASSPHRASE_* env var is set — needed now that getBestRoute
+    // resolves a per-network Horizon client via getNetworkConfig().
+    Networks: {
+      PUBLIC: 'Public Global Stellar Network ; September 2015',
+      TESTNET: 'Test SDF Network ; September 2015',
+    },
     __mockCall: callFn
   }
 })
@@ -39,6 +48,9 @@ describe('getBestRoute', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // horizonServers is memoised at module scope (see bestRoute.ts) — clear
+    // between tests so each one observes fresh Horizon.Server() constructions.
+    _resetHorizonServers()
   })
 
   it('Case 1: returns SDEX when SDEX price is better', async () => {
@@ -107,12 +119,38 @@ describe('getBestRoute', () => {
     mockCall.mockResolvedValue({
       records: [{ destination_amount: '123.456789' }] // 123.456789 / 1000 = 0.123456789
     })
-    
+
     // AMM: no pool data to simplify test or give known value
     mockQuery.mockResolvedValue({ rows: [] } as any)
 
     const result = await getBestRoute(assetA, assetB, pairKey, 1000)
 
     expect(result.sdexPrice).toBeCloseTo(0.123457, 6)
+  })
+
+  it('Case 6: queries the mainnet Horizon server when network="mainnet"', async () => {
+    mockCall.mockResolvedValue({ records: [{ destination_amount: '500' }] })
+    mockQuery.mockResolvedValue({ rows: [] } as any)
+
+    await getBestRoute(assetA, assetB, pairKey, 1000, 'mainnet')
+
+    const HorizonServerCtor = (StellarSdk as any).Horizon.Server
+    const urls = HorizonServerCtor.mock.calls.map((call: unknown[]) => call[0])
+    expect(urls.some((url: string) => url.includes('horizon.stellar.org'))).toBe(true)
+    expect(urls.some((url: string) => url.includes('testnet'))).toBe(false)
+  })
+
+  it('Case 7: testnet and mainnet reuse a memoised Horizon server per network', async () => {
+    mockCall.mockResolvedValue({ records: [{ destination_amount: '500' }] })
+    mockQuery.mockResolvedValue({ rows: [] } as any)
+
+    const HorizonServerCtor = (StellarSdk as any).Horizon.Server
+    const callsBefore = HorizonServerCtor.mock.calls.length
+
+    await getBestRoute(assetA, assetB, pairKey, 1000, 'mainnet')
+    await getBestRoute(assetA, assetB, pairKey, 1000, 'mainnet')
+
+    // Second mainnet call reuses the cached client — only one new Server() call.
+    expect(HorizonServerCtor.mock.calls.length).toBe(callsBefore + 1)
   })
 })

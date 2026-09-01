@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events'
 import { redis } from '../redis'
+import { activeNetwork } from '../config'
 import { priceEmitter, PRICE_UPDATE, PriceUpdateEvent } from '../events'
 import { register, Gauge, Counter } from 'prom-client'
 
@@ -26,7 +27,7 @@ export const ws_messages_dropped_total = new Counter({
 })
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
-const REDIS_CHANNEL = 'lens:price:updates'
+const REDIS_CHANNEL = `lens:${activeNetwork}:price:updates`
 const DEFAULT_COALESCE_INTERVAL_MS = 100 // max 10 updates/sec per client
 
 // ─── Client wrapper with backpressure & coalescing ────────────────────────────
