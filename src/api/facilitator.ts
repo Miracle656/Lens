@@ -43,6 +43,24 @@ async function facilitatorPlugin(app: FastifyInstance) {
     app.log.info('[facilitator] x402 facilitator initialized')
   }
 
+  // ── GET /supported — facilitator capability discovery ───────────────────
+  /**
+   * Lists the payment kinds (scheme + network pairs) and extensions this
+   * facilitator can verify and settle.
+   *
+   * Metadata only: it never moves money and never touches a signing key. So it
+   * is deliberately NOT x402-gated — a facilitator cannot charge for its own
+   * capability discovery, and a client has to be able to call this *before* it
+   * has any payment method configured — and NOT API-key gated
+   * (`config.public`), matching how the reference facilitator exposes it.
+   *
+   * The answer is derived from the schemes actually registered above, never
+   * from a hard-coded list of networks. That distinction is the whole point:
+   * advertising `stellar:pubnet` on a deployment with no mainnet key would
+   * have a client select mainnet, call /verify, and fail — through no fault of
+   * its own. A /supported that overstates is worse than one that returns
+   * fewer kinds.
+   */
   app.get('/supported', { config: { public: true } }, async (req, reply) => {
     return facilitator.getSupported()
   })

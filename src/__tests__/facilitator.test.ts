@@ -48,6 +48,64 @@ describe('Facilitator endpoints', () => {
     expect(res.json()).toEqual({ kinds: [{ scheme: 'exact' }] })
   })
 
+  it('GET /supported answers without an Authorization header — discovery is never gated', async () => {
+    // A facilitator cannot charge for its own capability discovery, and a
+    // client has to be able to call this BEFORE it has a payment method
+    // configured. Both x402 and API-key auth must skip it.
+    mockGetSupported.mockReturnValue({ kinds: [], extensions: [], signers: {} })
+    const res = await app.inject({ method: 'GET', url: '/supported', headers: {} })
+
+    expect(res.statusCode).toBe(200)
+    expect(res.statusCode).not.toBe(401)
+    expect(res.statusCode).not.toBe(402)
+  })
+
+  it('GET /supported returns the SupportedResponse shape from @x402/core', async () => {
+    mockGetSupported.mockReturnValue({
+      kinds: [{ x402Version: 2, scheme: 'exact', network: 'stellar:testnet', extra: { areFeesSponsored: true } }],
+      extensions: [],
+      signers: {},
+    })
+    const body = (await app.inject({ method: 'GET', url: '/supported' })).json()
+
+    expect(Array.isArray(body.kinds)).toBe(true)
+    expect(Array.isArray(body.extensions)).toBe(true)
+    expect(typeof body.signers).toBe('object')
+    for (const kind of body.kinds) {
+      expect(kind.scheme).toBe('exact')
+      expect(kind.x402Version).toBe(2)
+      expect(kind.extra).toHaveProperty('areFeesSponsored')
+    }
+  })
+
+  it('GET /supported advertises only what is registered, never a hard-coded network list', async () => {
+    // The failure this prevents: advertising stellar:pubnet on a deployment
+    // with no mainnet key. The client selects mainnet, calls /verify, and
+    // fails through no fault of its own — we promised a capability we do not
+    // have. Deriving the answer from the registered schemes means /supported
+    // can under-report but never overstate.
+    mockGetSupported.mockReturnValue({
+      kinds: [{ x402Version: 2, scheme: 'exact', network: 'stellar:testnet' }],
+      extensions: [],
+      signers: {},
+    })
+    const body = (await app.inject({ method: 'GET', url: '/supported' })).json()
+
+    const networks = body.kinds.map((k: any) => k.network)
+    expect(networks).toEqual(['stellar:testnet'])
+    expect(networks).not.toContain('stellar:pubnet')
+  })
+
+  it('GET /supported reports no kinds at all when nothing is registered', async () => {
+    // Honest emptiness beats a plausible lie: a facilitator with no keys is
+    // still reachable, and a client that reads an empty kinds list will look
+    // elsewhere instead of failing halfway through a payment.
+    mockGetSupported.mockReturnValue({ kinds: [], extensions: [], signers: {} })
+    const body = (await app.inject({ method: 'GET', url: '/supported' })).json()
+
+    expect(body.kinds).toEqual([])
+  })
+
   it('POST /verify returns verify response', async () => {
     mockVerify.mockResolvedValue({ isValid: true })
     const res = await app.inject({
