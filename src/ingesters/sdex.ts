@@ -18,7 +18,7 @@ function toAsset(asset: { code: string; issuer: string | null }): Asset {
 
 export async function ingestPair(pair: WatchedPair, network: NetworkName = activeNetwork): Promise<void> {
   const stateId = `sdex:${network}:${pair.pairKey}`
-  const cursor = await getIndexerCursor(stateId) ?? '0'
+  const cursor = await getIndexerCursor(stateId, network) ?? '0'
 
   try {
     const assetA = toAsset(pair.assetA)
@@ -60,7 +60,7 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
       const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
       const currentPrice = points[points.length - 1].price
 
-      await upsertPricePoints(points)
+      await upsertPricePoints(points, network)
       lastPrice.set(pair.pairKey, currentPrice)
 
       // Metrics instrumentation
@@ -68,7 +68,7 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
       last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
       const lastCursor = trades.records[trades.records.length - 1].paging_token
-      await setIndexerCursor(stateId, lastCursor)
+      await setIndexerCursor(stateId, lastCursor, network)
       console.log(`[sdex] ${pair.pairKey}: ingested ${points.length} trades`)
 
       publishPriceUpdate({

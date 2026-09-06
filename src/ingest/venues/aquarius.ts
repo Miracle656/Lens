@@ -83,7 +83,7 @@ export async function ingestAquariusPair(
 
   if (points.length === 0) return
 
-  await upsertPricePoints(points as any)
+  await upsertPricePoints(points as any, network)
 
   const latest = points[points.length - 1]
   const previousPrice = lastPrice.get(pair.pairKey) ?? latest.price

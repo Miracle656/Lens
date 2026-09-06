@@ -18,6 +18,9 @@ const ENV_KEYS = [
   'REFLECTOR_CONTRACT_ID_TESTNET',
   'REFLECTOR_CONTRACT_ID_MAINNET',
   'REFLECTOR_ENABLED_TESTNET',
+  'WATCHED_PAIRS',
+  'WATCHED_PAIRS_TESTNET',
+  'WATCHED_PAIRS_MAINNET',
 ]
 
 async function loadConfig() {
@@ -37,6 +40,37 @@ describe('per-network venue config', () => {
       if (originalEnv[key] === undefined) delete process.env[key]
       else process.env[key] = originalEnv[key]
     }
+  })
+
+  it('ships a mainnet watched pair by default, and it is Circle USDC', async () => {
+    // Every other per-network setting has a mainnet default, so turning mainnet
+    // on should not also require pasting an issuer address. Pinned because the
+    // wallet converts balances to fiat against this pair: quote the wrong USDC
+    // — Horizon lists many unrelated assets by that code — and every balance on
+    // screen is wrong in a way nothing else would catch.
+    delete process.env.WATCHED_PAIRS
+    delete process.env.WATCHED_PAIRS_MAINNET
+
+    const { getNetworkConfig } = await loadConfig()
+    const pairs = getNetworkConfig('mainnet').pairs
+
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0].assetA.code).toBe('USDC')
+    expect(pairs[0].assetA.issuer).toBe(
+      'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+    )
+    expect(pairs[0].assetB.code).toBe('XLM')
+  })
+
+  it('lets WATCHED_PAIRS_MAINNET override the default', async () => {
+    process.env.WATCHED_PAIRS_MAINNET =
+      'EURC:GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2/XLM'
+
+    const { getNetworkConfig } = await loadConfig()
+    const pairs = getNetworkConfig('mainnet').pairs
+
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0].assetA.code).toBe('EURC')
   })
 
   it('defaults Aquarius to disabled on testnet and enabled on mainnet', async () => {

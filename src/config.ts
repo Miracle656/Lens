@@ -66,6 +66,9 @@ function makePairKey(a: AssetId, b: AssetId): string {
   return [aStr, bStr].sort().join('/')
 }
 
+const MAINNET_DEFAULT_PAIRS =
+  'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/XLM'
+
 function parseWatchedPairs(raw: string): WatchedPair[] {
   if (!raw.trim()) return []
   return raw.split(',').map(pair => {
@@ -165,10 +168,17 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     reflectorContractId !== ''
 
   // ── Watched pairs ─────────────────────────────────────────────────────────
+  // Mainnet gets a default for the same reason every field above does: turning
+  // it on should not require knowing an issuer address by heart. USDC/XLM is
+  // the pair the wallet actually converts balances against.
+  //
+  // The issuer is Circle's, confirmed by its home domain (circle.com) rather
+  // than by asset code — Horizon lists many unrelated assets also called USDC,
+  // and picking the wrong one would quote a price no one trades at.
   const rawPairs =
     process.env[`WATCHED_PAIRS_${suffix}`] ||
     (network === 'testnet' ? process.env.WATCHED_PAIRS : undefined) ||
-    ''
+    (network === 'mainnet' ? MAINNET_DEFAULT_PAIRS : '')
 
   // ── Facilitator ───────────────────────────────────────────────────────────
   const facilitatorSecretKey =

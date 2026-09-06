@@ -236,7 +236,7 @@ export async function ingestPool(
         timestamp: new Date(),
         eventId: `soroswap-${poolEntry.poolAddress}-${Date.now()}`,
       },
-    ])
+    ], network)
 
     const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
     lastPrice.set(pair.pairKey, spotPrice)

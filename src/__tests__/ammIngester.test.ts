@@ -73,14 +73,19 @@ describe('AMM Ingester', () => {
       })
     })
 
-    await ingestPoolTrades({ id: 'pool-1' }, mockPair as any)
+    // Deliberately a network other than the active one: the point of passing
+    // it explicitly is that rows are tagged by the loop that produced them, not
+    // by the process-wide STELLAR_NETWORK. Asserting 'testnet' here would pass
+    // just as well against the bug this replaced.
+    await ingestPoolTrades({ id: 'pool-1' }, mockPair as any, 'mainnet')
 
     expect(upsertPricePoints).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
           price: 0.2,
         })
-      ])
+      ]),
+      'mainnet'
     )
   })
 })

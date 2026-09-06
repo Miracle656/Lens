@@ -84,7 +84,7 @@ export async function snapshotPool(
         ledger: pool.last_modified_ledger ?? 0,
         timestamp: new Date(),
         eventId: `amm-snapshot-${pool.id}-${Date.now()}`,
-      }])
+      }], network)
 
       const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
       lastPrice.set(pair.pairKey, spotPrice)
@@ -114,7 +114,7 @@ export async function ingestPoolTrades(
   network: NetworkName = activeNetwork
 ): Promise<void> {
   const stateId = `amm:${network}:${pool.id}`
-  const cursor = await getIndexerCursor(stateId) ?? '0'
+  const cursor = await getIndexerCursor(stateId, network) ?? '0'
 
   try {
     const response = await fetch(
@@ -150,7 +150,7 @@ export async function ingestPoolTrades(
     const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
     const currentPrice = points[points.length - 1].price
 
-    await upsertPricePoints(points)
+    await upsertPricePoints(points, network)
     lastPrice.set(pair.pairKey, currentPrice)
 
     // Metrics instrumentation
@@ -158,7 +158,7 @@ export async function ingestPoolTrades(
     last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
     const lastCursor = records[records.length - 1].paging_token
-    await setIndexerCursor(stateId, lastCursor)
+    await setIndexerCursor(stateId, lastCursor, network)
     console.log(`[amm] Pool ${pool.id.slice(0, 8)}: ingested ${points.length} trades`)
 
     publishPriceUpdate({
