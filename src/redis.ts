@@ -4,10 +4,31 @@ import { config, activeNetwork } from './config'
 export const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
   lazyConnect: true,
+  // ioredis retries about once a second forever by default. Against a host
+  // that no longer resolves that is a DNS lookup and two log lines every
+  // second — roughly 170k lines a day, which buries every real message in the
+  // log and is how a dead cache stayed invisible for weeks. Back off to a
+  // lookup a minute instead. Still reconnects on its own when the host comes
+  // back; just quietly.
+  retryStrategy: (times) => Math.min(times * 2_000, 60_000),
 })
 
+// Same reasoning for the error events themselves: report the first one, then
+// at most one a minute with a count of what was suppressed, so a persistent
+// outage stays visible without drowning everything else.
+let lastRedisErrorLog = 0
+let suppressedRedisErrors = 0
+
 redis.on('error', (err) => {
-  console.error('[redis] Connection error:', err.message)
+  const now = Date.now()
+  if (now - lastRedisErrorLog < 60_000) {
+    suppressedRedisErrors++
+    return
+  }
+  const suffix = suppressedRedisErrors > 0 ? ` (${suppressedRedisErrors} more since last report)` : ''
+  console.error('[redis] Connection error:', err.message + suffix)
+  lastRedisErrorLog = now
+  suppressedRedisErrors = 0
 })
 
 export async function getCachedPrice(pairKey: string): Promise<string | null> {

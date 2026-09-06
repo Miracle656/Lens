@@ -181,13 +181,22 @@ async function main() {
   }
 
   // ── Aggregate refresh worker (non-blocking — requires Redis) ─────────────
-  try {
-    const queue = createAggregateQueue()
-    startAggregateWorker()
-    await scheduleAggregateRefresh(queue)
-    console.log('[lens] Aggregate refresh worker started')
-  } catch (err) {
-    console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
+  // BullMQ opens its own ioredis connections, separate from ./redis and
+  // without our error handler on them. If scheduling fails they are still
+  // live, reconnecting forever and logging "[ioredis] Unhandled error event"
+  // on every attempt — so close whatever got created before giving up.
+  {
+    let queue: ReturnType<typeof createAggregateQueue> | undefined
+    let worker: ReturnType<typeof startAggregateWorker> | undefined
+    try {
+      queue = createAggregateQueue()
+      worker = startAggregateWorker()
+      await scheduleAggregateRefresh(queue)
+      console.log('[lens] Aggregate refresh worker started')
+    } catch (err) {
+      console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
+      await Promise.allSettled([queue?.close(), worker?.close()])
+    }
   }
 
   // ── Snapshot retention ────────────────────────────────────────────────────
@@ -212,15 +221,20 @@ async function main() {
 
   await safePrune()
 
-  try {
-    const retentionQueue = createSnapshotRetentionQueue()
-    startSnapshotRetentionWorker()
-    await scheduleSnapshotRetention(retentionQueue)
-    console.log('[lens] Snapshot retention worker started')
-  } catch (err) {
-    console.warn('[lens] Snapshot retention worker skipped (Redis unavailable):', (err as Error).message)
-    console.warn('[lens] Falling back to an in-process hourly prune')
-    setInterval(() => { void safePrune() }, 60 * 60 * 1000).unref()
+  {
+    let retentionQueue: ReturnType<typeof createSnapshotRetentionQueue> | undefined
+    let retentionWorker: ReturnType<typeof startSnapshotRetentionWorker> | undefined
+    try {
+      retentionQueue = createSnapshotRetentionQueue()
+      retentionWorker = startSnapshotRetentionWorker()
+      await scheduleSnapshotRetention(retentionQueue)
+      console.log('[lens] Snapshot retention worker started')
+    } catch (err) {
+      console.warn('[lens] Snapshot retention worker skipped (Redis unavailable):', (err as Error).message)
+      console.warn('[lens] Falling back to an in-process hourly prune')
+      await Promise.allSettled([retentionQueue?.close(), retentionWorker?.close()])
+      setInterval(() => { void safePrune() }, 60 * 60 * 1000).unref()
+    }
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
