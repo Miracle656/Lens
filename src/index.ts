@@ -43,7 +43,7 @@ import { startSoroswapIngester } from './ingesters/soroswap'
 import { startSnapshotIngester } from './ingesters/snapshot'
 import { startAquariusIngester } from './ingest/venues/aquarius'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
-import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention } from './jobs/snapshotRetention'
+import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention, pruneOldSnapshots, SNAPSHOT_RETENTION_DAYS } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 import { getMetrics } from './metrics'
 
@@ -190,7 +190,28 @@ async function main() {
     console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
   }
 
-  // ── Snapshot retention worker (non-blocking — requires Redis) ─────────────
+  // ── Snapshot retention ────────────────────────────────────────────────────
+  // price_snapshots is append-only and unbounded, so pruning it is a data
+  // lifecycle concern, not a caching one. BullMQ is only how the prune gets
+  // scheduled — losing Redis must not mean losing retention, because the
+  // failure is silent and the bill arrives as a full disk weeks later.
+  //
+  // So: prune once here, unconditionally, then try to install the hourly
+  // schedule. If Redis is away, fall back to a plain timer that does the same
+  // work in-process.
+  const safePrune = async () => {
+    try {
+      const pruned = await pruneOldSnapshots()
+      if (pruned > 0) {
+        console.log(`[lens] Pruned ${pruned} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+      }
+    } catch (err) {
+      console.error('[lens] Snapshot prune failed:', (err as Error).message)
+    }
+  }
+
+  await safePrune()
+
   try {
     const retentionQueue = createSnapshotRetentionQueue()
     startSnapshotRetentionWorker()
@@ -198,6 +219,8 @@ async function main() {
     console.log('[lens] Snapshot retention worker started')
   } catch (err) {
     console.warn('[lens] Snapshot retention worker skipped (Redis unavailable):', (err as Error).message)
+    console.warn('[lens] Falling back to an in-process hourly prune')
+    setInterval(() => { void safePrune() }, 60 * 60 * 1000).unref()
   }
 
   // ── Ingesters (run in background — infinite loops) ────────────────────────
