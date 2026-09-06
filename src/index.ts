@@ -54,8 +54,23 @@ async function main() {
   console.log('[lens] Database ready.')
 
   // ── Connect dependencies ──────────────────────────────────────────────────
-  await redis.connect()
-  console.log('[lens] Redis connected')
+  // Redis is a cache and a job broker, not a source of truth: reads fall back
+  // to Postgres (see getCachedPrice), writes are best-effort, and all three
+  // background workers below are already registered inside their own try/catch
+  // for exactly this case. Connecting eagerly is still worth doing so a
+  // healthy deploy fails fast and loudly if the URL is wrong — but letting the
+  // rejection escape turned a dead cache into a dead API, and the process
+  // exited before ever reaching app.listen(). Prices stay served from the
+  // database, uncached, until Redis comes back.
+  try {
+    await redis.connect()
+    console.log('[lens] Redis connected')
+  } catch (err) {
+    console.warn(
+      '[lens] Redis unavailable, continuing without cache:',
+      (err as Error).message,
+    )
+  }
 
   await pgPool.connect()
   console.log('[lens] PostgreSQL connected')
