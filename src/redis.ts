@@ -4,6 +4,21 @@ import { config, activeNetwork } from './config'
 export const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
   lazyConnect: true,
+  // Fail commands immediately while disconnected instead of queueing them.
+  //
+  // ioredis defaults this to true, so with an unreachable host every command
+  // sits in the offline queue waiting for a connection that never comes. The
+  // await simply never resolves — a hang, not an error, so the try/catch in
+  // getCachedPrice cannot help and the request dies of timeout instead of
+  // falling through to Postgres.
+  //
+  // It stayed hidden while REQUIRE_API_KEY was on, because the auth hook
+  // rejected requests before any handler could reach Redis. Opening the API up
+  // turned a 401 into a hang, which looked like the key change had failed.
+  //
+  // Rejecting fast is what the callers already expect: reads fall back to the
+  // database, writes are best-effort, and x402 metering fails closed.
+  enableOfflineQueue: false,
   // ioredis retries about once a second forever by default. Against a host
   // that no longer resolves that is a DNS lookup and two log lines every
   // second — roughly 170k lines a day, which buries every real message in the
