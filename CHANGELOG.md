@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- 81d8e59: Add seller-side Bazaar discovery helpers (`src/bazaar/declare.ts`): `param.*`
+  constructors that make per-parameter descriptions a required positional
+  argument, `declareHttpResource` / `declareMcpTool` builders that assemble the
+  `extensions.bazaar` declaration and its JSON Schema, and
+  `validateDeclaration` / `assertDeclaration` which run the catalog's own
+  `validateListing` plus seller-side metadata-quality rules so malformed listings
+  fail at development time rather than in production. Lens's own gated routes
+  (`/price`, `/candles`, `/pools`, `/price/twap`, and the MCP price tool) are
+  declared with them in `src/bazaar/lensListings.ts`.
+- 059ca5a: Add a `priceUpdated(pair: String!, network: String)` GraphQL subscription that streams live prices over the existing `/graphql` endpoint (graphql-transport-ws protocol). Every ingester (SDEX, Horizon AMM, Soroswap) publishes `{ pair, price, ts, network }` on each new price; subscribers receive only the pair they request. `network` is optional and narrows the stream to one chain — omitting it delivers every enabled network, which is only safe if the subscriber reads the `network` field on each message, since a dual-network deployment otherwise interleaves two chains' prices for the same pair.
+
+### Patch Changes
+
+- dca5ff3: Add `docs/x402-conformance.md`: a conformance baseline for the public `x402.org`
+  facilitator on `stellar:testnet`, established by settling a real payment through
+  it with an unmodified `@stellar/stellar-sdk` client and feeding it deliberately
+  bad input. Records `/supported` verbatim, a settled transaction hash, a
+  reason-per-rejection table, and five divergences between the reference
+  implementation's advertised and actual behaviour. This is the baseline the Lens
+  facilitator (#124, #125, #126) is measured against.
+
 ## 0.2.0
 
 ### Minor Changes
