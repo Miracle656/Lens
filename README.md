@@ -15,6 +15,8 @@ Aggregates price data from Stellar's Classic Order Book (SDEX) and AMM Liquidity
 | Method | Path | Description |
 |---|---|---|
 | GET | `/price/:assetA/:assetB` | Current VWAP, 24h volume, best route |
+| GET | `/price/twap/:assetA/:assetB` | TWAP pricing over a time window |
+| GET | `/price/vwap/:assetA/:assetB` | VWAP pricing over a time window |
 | GET | `/price/:assetA/:assetB/route?amount=1000` | Best execution route for a given amount |
 | GET | `/price/:assetA/:assetB/history?window=1h` | OHLCV history (`1m`, `5m`, `1h`, `24h`) |
 | GET | `/prices/history?pair=XLM/USDC&from=…&to=…&interval=1m` | Historical 1-minute price snapshots, optionally aggregated (`1m`, `5m`, `1h`); ~30-day retention |

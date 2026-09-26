@@ -42,10 +42,12 @@ vi.mock('../config', () => ({
 }))
 
 import { registerRESTRoutes } from '../api/rest'
+import { registerPriceRoutes } from '../routes/price'
 
 async function buildApp() {
   const app = Fastify({ logger: false })
   await registerRESTRoutes(app)
+  await registerPriceRoutes(app)
   await app.ready()
   return app
 }
@@ -138,5 +140,41 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     const body = res.json()
     expect(body.confidence).toBe('unknown')
     expect(body.lastTradeAgeSeconds).toBeNull()
+  })
+})
+
+describe('TWAP/VWAP Input Validation', () => {
+  it('rejects TWAP with invalid window', async () => {
+    const app = await buildApp()
+    const res1 = await app.inject({ method: 'GET', url: '/price/twap/XLM/USDC?window=abc' })
+    expect(res1.statusCode).toBe(400)
+    const res2 = await app.inject({ method: 'GET', url: '/price/twap/XLM/USDC?window=0' })
+    expect(res2.statusCode).toBe(400)
+    const res3 = await app.inject({ method: 'GET', url: '/price/twap/XLM/USDC?window=99999' })
+    expect(res3.statusCode).toBe(400)
+  })
+
+  it('rejects TWAP with invalid sampleInterval', async () => {
+    const app = await buildApp()
+    const res1 = await app.inject({ method: 'GET', url: '/price/twap/XLM/USDC?sampleInterval=abc' })
+    expect(res1.statusCode).toBe(400)
+  })
+
+  it('rejects TWAP with invalid method', async () => {
+    const app = await buildApp()
+    const res1 = await app.inject({ method: 'GET', url: '/price/twap/XLM/USDC?method=bogus' })
+    expect(res1.statusCode).toBe(400)
+  })
+
+  it('rejects VWAP with invalid method', async () => {
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/price/vwap/XLM/USDC?method=bogus' })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects VWAP with invalid window', async () => {
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/price/vwap/XLM/USDC?window=abc' })
+    expect(res.statusCode).toBe(400)
   })
 })
