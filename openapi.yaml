@@ -456,12 +456,19 @@ components:
               description:
                 type: string
     TooManyRequests:
-      description: Rate limit exceeded
+      description: >-
+        Rate limit exceeded. This is either the per-minute burst limit
+        (`ratePerMin`) or the per-key **daily** quota (`ratePerDay`), which
+        resets at 00:00 UTC: a `Daily rate limit exceeded, retry in ...` message
+        means the daily quota was hit, otherwise it is the minute window. See
+        `docs/api-key-quotas.md`.
       headers:
         Retry-After:
           schema:
             type: integer
-          description: Seconds to wait before retrying
+          description: >-
+            Seconds to wait before retrying — until the next minute for the
+            burst limit, or until the next UTC midnight for the daily quota.
         X-RateLimit-Remaining:
           schema:
             type: integer
