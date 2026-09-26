@@ -24,6 +24,7 @@ import { registerNetworkSelector } from './middleware/network'
 import { registerHttpMetrics } from './middleware/httpMetrics'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
+import { registerDailyQuota } from './api/dailyQuota'
 import { registerAdminRoutes } from './api/admin'
 import { registerUsageRoutes } from './api/usage'
 import { registerFacilitatorRoutes } from './api/facilitator'
@@ -137,6 +138,14 @@ async function main() {
       }
     }
   })
+
+  // Per-key DAILY quota (#175). Uses ApiKey.ratePerDay, which the minute
+  // limiter above ignores. Registered AFTER @fastify/rate-limit on purpose:
+  // onRequest hooks run in registration order, so a request the minute limiter
+  // already rejected never spends a daily slot. Backed by Redis (survives a
+  // process restart) and fails closed (503) if Redis is unreachable — see
+  // src/api/dailyQuota.ts for the reasoning.
+  await app.register(registerDailyQuota)
 
   // Admin endpoints (key issuance/revocation) — gated by ADMIN_TOKEN. Marked
   // `config.public` so the API-key auth hook skips them.
