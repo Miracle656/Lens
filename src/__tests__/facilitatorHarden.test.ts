@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Fastify from 'fastify'
+import rateLimit from '@fastify/rate-limit'
 import {
   Account,
   Asset,
@@ -97,6 +98,9 @@ function settleBody(transaction = LOW_FEE_ENVELOPE, network = 'stellar:testnet')
 
 async function buildApp() {
   const app = Fastify({ logger: false })
+  // The route-level `rateLimit` config only takes effect once the plugin is
+  // registered, so the test app has to register it too.
+  await app.register(rateLimit, { max: 100, timeWindow: '1 minute' })
   await registerSettleRoute(app)
   await app.ready()
   return app
@@ -278,22 +282,23 @@ describe('POST /settle — hardening (#147)', () => {
     expect(second.json()).toEqual(stored)
   })
 
-  it('registers a /settle rate limit tighter than the global 100/min default', async () => {
+  it('rejects the 21st /settle request with 429 (route limit beats the 100/min default)', async () => {
     const app = await buildApp()
     expect(app.hasRoute({ method: 'POST', url: '/settle' })).toBe(true)
 
-    // Pull the route config Fastify stored when registerSettleRoute ran.
-    const routes: Array<{ method: string | string[]; path?: string; url?: string; opts?: any; config?: any }> =
-      (app as any).routes ?? []
-    const post = routes.find(r => {
-      const methods = Array.isArray(r.method) ? r.method : [r.method]
-      const path = r.path ?? r.url
-      return methods.includes('POST') && path === '/settle'
-    })
-    const max = post?.opts?.config?.rateLimit?.max ?? post?.config?.rateLimit?.max
-    expect(max).toBeDefined()
-    expect(max!).toBeLessThan(100)
-    expect(max!).toBe(20)
+    // Assert the behaviour, not Fastify internals: `app.routes` is not a
+    // Fastify API, so the previous introspection read `undefined` and the
+    // assertion could only ever fail for the wrong reason. The route-level
+    // override is 20/min against the 100/min global default, so the 21st
+    // request is the first one that must be rejected.
+    const statuses: number[] = []
+    for (let i = 0; i < 21; i += 1) {
+      const res = await app.inject({ method: 'POST', url: '/settle', payload: settleBody() })
+      statuses.push(res.statusCode)
+    }
+
+    expect(statuses.filter(code => code === 429)).toHaveLength(1)
+    expect(statuses[20]).toBe(429)
   })
 }
 )

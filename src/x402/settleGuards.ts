@@ -161,11 +161,16 @@ export async function reserveDailySpend(
     }
     return { ok: true }
   } catch (err) {
+    // Fail closed, but never echo the driver error to the caller: /settle is a
+    // public route and an ioredis failure reads
+    // "connect ECONNREFUSED <host>:<port>", which is internal topology. The
+    // detail stays in the server log.
+    console.error('[settleGuards] spend ledger unavailable; refusing settle', err)
     return {
       ok: false,
       reason: 'store_unavailable',
       feeStroops,
-      errorMessage: `Spend ledger unavailable; refusing settle (fail-closed): ${(err as Error).message}`,
+      errorMessage: 'Spend ledger unavailable; refusing settle (fail-closed).',
     }
   }
 }
