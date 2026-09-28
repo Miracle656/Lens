@@ -6,13 +6,14 @@ export default defineConfig({
     globals: true,
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     exclude: ['dist/**', 'node_modules/**'],
-    // forks: each concurrent file gets its own process, so process.env
-    // mutations cannot race across files (the flake root cause).
+    // forks: each concurrent file gets its own process. This pins Vitest's
+    // existing default rather than changing it - the flake was env leakage
+    // within a reused fork, which setupFiles settles.
     pool: 'forks',
     setupFiles: ['./vitest.setup.ts'],
-    // resetModules()+@stellar/stellar-sdk reimport (networkVenueConfig) and
-    // 10k-iteration property tests need headroom under parallel fork load;
-    // the 5s default was itself a source of intermittent reds.
-    testTimeout: 60_000,
+    // resetModules()+@stellar/stellar-sdk reimport (networkVenueConfig) needs
+    // a little headroom over the 5s default. Kept deliberately tight: a loose
+    // ceiling hides a genuine hang as a slow pass.
+    testTimeout: 20_000,
   },
 })
