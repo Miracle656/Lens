@@ -35,8 +35,9 @@ export function startAggregateWorker() {
           lastUpdated: new Date(),
         }
 
-        // Cache in Redis
-        await setCachedPrice(pairKey, result, config.cache.priceTtl)
+        // Cache in Redis. The key is built from (network, pairKey) inside the
+        // helper, so this write and the /price route's read produce the same key.
+        await setCachedPrice(activeNetwork, pairKey, result, config.cache.priceTtl)
 
         // Upsert aggregate buckets for each window
         const windows: Array<{ key: string; minutes: number }> = [
@@ -50,7 +51,7 @@ export function startAggregateWorker() {
         bucket.setSeconds(0, 0)
 
         for (const w of windows) {
-          const [vwap, sdexVwap, ammVwap, ohlcv] = await Promise.all([
+          const [vwap, sdexVwap, ammVwap, ohlcv'] = await Promise.all([
             calculateVWAP(pairKey, w.minutes),
             calculateVWAP(pairKey, w.minutes, 'SDEX'),
             calculateVWAP(pairKey, w.minutes, 'AMM'),
@@ -64,14 +65,14 @@ export function startAggregateWorker() {
             create: {
               network: activeNetwork, pairKey, window: w.key, bucket,
               vwap, sdexVwap: sdexVwap || null, ammVwap: ammVwap || null,
-              volume: ohlcv.volume, tradeCount: ohlcv.tradeCount,
-              openPrice: ohlcv.open || null, closePrice: ohlcv.close || null,
-              highPrice: ohlcv.high || null, lowPrice: ohlcv.low || null,
+              volume: ohlcv?.volume ?? 0, tradeCount: ohlcv?.tradeCount ?? 0,
+              openPrice: ohlcv?.open || null, closePrice: ohlcv?.close || null,
+              highPrice: ohlcv?.high || null, lowPrice: ohlcv?.low || null,
             },
             update: {
               vwap, sdexVwap: sdexVwap || null, ammVwap: ammVwap || null,
-              volume: ohlcv.volume, tradeCount: ohlcv.tradeCount,
-              closePrice: ohlcv.close || null, highPrice: ohlcv.high || null, lowPrice: ohlcv.low || null,
+              volume: ohlcv?.volume ?? 0, tradeCount: ohlcv?.tradeCount ?? 0,
+              closePrice: ohlcv?.close || null, highPrice: ohlcv?.high || null, lowPrice: ohlcv?.low || null,
             },
           })
         }

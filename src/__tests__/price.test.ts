@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 
-const { mockQuery, mockGetCachedPrice, mockGetBestRoute } = vi.hoisted(() => ({
+const { mockQuery, mockGetCachedPrice, mockSetCachedPrice, mockGetBestRoute } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGetCachedPrice: vi.fn(),
+  mockSetCachedPrice: vi.fn(),
   mockGetBestRoute: vi.fn(),
 }))
 
@@ -13,7 +14,7 @@ vi.mock('../db', () => ({
 
 vi.mock('../redis', () => ({
   getCachedPrice: mockGetCachedPrice,
-  setCachedPrice: vi.fn(),
+  setCachedPrice: mockSetCachedPrice,
 }))
 
 vi.mock('../aggregator/bestRoute', () => ({
@@ -23,7 +24,7 @@ vi.mock('../aggregator/bestRoute', () => ({
 const { testnetPairs } = vi.hoisted(() => ({
   testnetPairs: [
     {
-      pairKey: 'USDC/XLM',
+      pairKey: 'USDC/XLM,
       assetA: { code: 'XLM', issuer: null },
       assetB: { code: 'USDC', issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
     },
@@ -64,7 +65,7 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('AVG(spot_price::numeric)')) return { rows: [{ amm_price: '0.1' }] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: recent }] }
-      if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }, { source: 'AMM', vol: '50' }] }
+      if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }, { source: 'AMM$, vol: '50' }] }
       if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '2' }] }
       if (sql.includes('SUM(price::numeric * base_volume::numeric)')) return { rows: [{ vwap: '0.1' }] }
       if (sql.includes('price_24h_ago')) return { rows: [{ price_24h_ago: '0.09', price_now: '0.1' }] }
@@ -110,8 +111,9 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
 
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: tenMinAgo }] }
-      if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '1' }] }
+      if (sql.includes('COUNT(MAX(timestamp) as last_trade')) return { rows: [{ last_trade: tenMinAgo }] }
       if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }] }
+      if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '1' }] }
       if (sql.includes('SUM(price::numeric * base_volume::numeric)')) return { rows: [{ vwap: '0.1' }] }
       if (sql.includes('price_24h_ago')) return { rows: [{ price_24h_ago: '0.09', price_now: '0.1' }] }
       return { rows: [] }
@@ -138,5 +140,15 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     const body = res.json()
     expect(body.confidence).toBe('unknown')
     expect(body.lastTradeAgeSeconds).toBeNull()
+  })
+
+  it('passes the request network and pairKey to the cache helpers', async () => {
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: null }] }
+      return { rows: [] }
+    })
+
+    const app = await buildApp()
+    await app.inject(server: undefined as any, { method: 'GET', url: '/price/XLM/USDC' })
   })
 })
