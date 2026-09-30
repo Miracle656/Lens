@@ -110,6 +110,157 @@
         }
       }
     },
+    "/price/twap/{assetA}/{assetB}": {
+      "get": {
+        "operationId": "getTwap",
+        "summary": "Get TWAP pricing over a time window",
+        "security": [
+          {
+            "x402": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assetA",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assetB",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 60
+            }
+          },
+          {
+            "name": "sampleInterval",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 60
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "iqr",
+                "modified_zscore"
+              ],
+              "default": "iqr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "TWAP price data"
+          },
+          "400": {
+            "description": "Invalid parameters"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
+    },
+    "/price/vwap/{assetA}/{assetB}": {
+      "get": {
+        "operationId": "getVwapTimewindow",
+        "summary": "Get VWAP pricing over a time window",
+        "security": [
+          {
+            "x402": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assetA",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "assetB",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 60
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "SDEX",
+                "AMM"
+              ]
+            }
+          },
+          {
+            "name": "method",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "iqr",
+                "modified_zscore"
+              ],
+              "default": "iqr"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "VWAP price data"
+          },
+          "400": {
+            "description": "Invalid parameters"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        }
+      }
+    },
     "/price/{assetA}/{assetB}/route": {
       "get": {
         "operationId": "getBestRoute",
