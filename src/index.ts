@@ -43,7 +43,7 @@ import { startSoroswapIngester } from './ingesters/soroswap'
 import { startSnapshotIngester } from './ingesters/snapshot'
 import { startAquariusIngester } from './ingest/venues/aquarius'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
-import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention, pruneOldSnapshots, SNAPSHOT_RETENTION_DAYS } from './jobs/snapshotRetention'
+import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention, pruneAllNetworks, SNAPSHOT_RETENTION_DAYS } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 import { getMetrics } from './metrics'
 
@@ -210,9 +210,11 @@ async function main() {
   // work in-process.
   const safePrune = async () => {
     try {
-      const pruned = await pruneOldSnapshots()
-      if (pruned > 0) {
-        console.log(`[lens] Pruned ${pruned} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+      const counts = await pruneAllNetworks()
+      for (const [network, pruned] of Object.entries(counts)) {
+        if (pruned > 0) {
+          console.log(`[lens] Pruned ${pruned} ${network} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+        }
       }
     } catch (err) {
       console.error('[lens] Snapshot prune failed:', (err as Error).message)
