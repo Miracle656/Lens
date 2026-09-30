@@ -53,6 +53,42 @@ describe('AMM Ingester', () => {
     )
   })
 
+  it('tags snapshots with the requested network when STELLAR_NETWORK is unset', async () => {
+    const previousNetwork = process.env.STELLAR_NETWORK
+    delete process.env.STELLAR_NETWORK
+
+    try {
+      vi.resetModules()
+      const createSnapshot = vi.fn()
+      vi.doMock('../db', () => ({
+        prisma: { poolSnapshot: { create: createSnapshot } },
+        upsertPricePoints: vi.fn(),
+        getIndexerCursor: vi.fn(),
+        setIndexerCursor: vi.fn(),
+      }))
+      const { snapshotPool: snapshotOnMainnet } = await import('../ingesters/amm')
+
+      await snapshotOnMainnet({
+        id: 'pool-mainnet',
+        reserves: [
+          { asset: 'native', amount: '100.0' },
+          { asset: 'USD:GABC...', amount: '20.0' },
+        ],
+        total_shares: '50',
+        last_modified_ledger: 12345,
+      }, mockPair as any, 'mainnet')
+
+      expect(createSnapshot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ network: 'mainnet' }),
+        })
+      )
+    } finally {
+      if (previousNetwork === undefined) delete process.env.STELLAR_NETWORK
+      else process.env.STELLAR_NETWORK = previousNetwork
+    }
+  })
+
   it('ingests trades correctly', async () => {
     (getIndexerCursor as any).mockResolvedValue('0')
     

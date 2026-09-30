@@ -54,7 +54,7 @@ export async function snapshotPool(
 
     await prisma.poolSnapshot.create({
       data: {
-        network: activeNetwork,
+        network,
         poolId: pool.id,
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
