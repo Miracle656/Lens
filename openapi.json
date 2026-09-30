@@ -32,6 +32,13 @@
                     "ok": {
                       "type": "boolean"
                     },
+                    "network": {
+                      "type": "string",
+                      "enum": [
+                        "testnet",
+                        "mainnet"
+                      ]
+                    },
                     "watchedPairs": {
                       "type": "array",
                       "items": {
@@ -45,6 +52,10 @@
                     "lastProcessedAt": {
                       "type": "string",
                       "format": "date-time",
+                      "nullable": true
+                    },
+                    "ingestLagSeconds": {
+                      "type": "integer",
                       "nullable": true
                     }
                   }
