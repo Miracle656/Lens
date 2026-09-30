@@ -63,9 +63,11 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
       await upsertPricePoints(points, network)
       lastPrice.set(pair.pairKey, currentPrice)
 
-      // Metrics instrumentation
-      trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
-      last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
+      // Metrics instrumentation. `network` is the loop's own network, not
+      // `activeNetwork` — one ingester set runs per enabled network and they
+      // all share this registry.
+      trades_ingested_total.inc({ pair: pair.pairKey, network }, points.length)
+      last_trade_timestamp.set({ pair: pair.pairKey, network }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
       const lastCursor = trades.records[trades.records.length - 1].paging_token
       await setIndexerCursor(stateId, lastCursor, network)

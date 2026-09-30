@@ -68,7 +68,7 @@ export async function snapshotPool(
       },
     })
 
-    amm_snapshots_total.inc({ pool: pool.id })
+    amm_snapshots_total.inc({ pool: pool.id, network })
 
     // Also record spot price as a price point (no volume — it's a snapshot, not a trade)
     if (spotPrice > 0) {
@@ -153,9 +153,11 @@ export async function ingestPoolTrades(
     await upsertPricePoints(points, network)
     lastPrice.set(pair.pairKey, currentPrice)
 
-    // Metrics instrumentation
-    trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
-    last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
+    // Metrics instrumentation. `network` is the loop's own network, not
+    // `activeNetwork` — one ingester set runs per enabled network and they all
+    // share this registry.
+    trades_ingested_total.inc({ pair: pair.pairKey, network }, points.length)
+    last_trade_timestamp.set({ pair: pair.pairKey, network }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
     const lastCursor = records[records.length - 1].paging_token
     await setIndexerCursor(stateId, lastCursor, network)

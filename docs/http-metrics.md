@@ -2,7 +2,10 @@
 
 Lens exports Prometheus metrics for the HTTP layer on the existing public
 `/metrics` route, alongside the ingestion and database metrics defined in
-[`src/metrics.ts`](../src/metrics.ts).
+[`src/metrics.ts`](../src/metrics.ts). The ingestion metrics have their own doc
+— [`ingest-metrics.md`](ingest-metrics.md) — because the label constraint there
+is different: they are labelled by `network` so the per-network ingester loops
+cannot overwrite each other's series.
 
 These three signals — request rate, error rate and p95 latency — are what answer
 "is the API healthy". The pre-existing `price_requests_total` counts price calls

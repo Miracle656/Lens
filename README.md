@@ -92,6 +92,22 @@ histogram_quantile(0.95,
 See [`docs/http-metrics.md`](docs/http-metrics.md) for the full label reference,
 the bucket rationale and suggested alerting rules.
 
+The ingestion metrics are labelled by `network` as well, so a dual-network
+deployment reports each network separately:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `trades_ingested_total` | Counter | `pair`, `network` |
+| `amm_snapshots_total` | Counter | `pool`, `network` |
+| `price_snapshots_total` | Counter | `network` |
+| `last_trade_timestamp` | Gauge | `pair`, `network` |
+
+`last_trade_timestamp` is a gauge, so without the `network` label one network's
+ingester overwrites the other's value for the same pair — which would make the
+staleness signal silently unusable. See
+[`docs/ingest-metrics.md`](docs/ingest-metrics.md) for the cardinality notes
+(`pairs x networks`) and a staleness alert.
+
 ### GraphQL Subscriptions (live prices)
 
 Lens exposes a `priceUpdated(pair)` subscription that pushes a message every time
