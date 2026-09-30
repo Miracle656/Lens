@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { pgPool } from '../db'
-import { activeNetwork } from '../config'
+import { activeNetwork, type NetworkName } from '../config'
+import '../middleware/network' // declares req.network on the FastifyRequest type
 
 /** Supported aggregation intervals → bucket width in seconds. */
 export const HISTORY_INTERVAL_SECONDS: Record<string, number> = {
@@ -30,7 +31,8 @@ export async function queryHistory(
   pair: string,
   from: Date,
   to: Date,
-  intervalSecs: number
+  intervalSecs: number,
+  network: NetworkName
 ): Promise<HistoryPoint[]> {
   const result = await pgPool.query(
     `SELECT
@@ -43,7 +45,7 @@ export async function queryHistory(
        AND ts <= $4
      GROUP BY floor(EXTRACT(EPOCH FROM ts) / $1)
      ORDER BY bucket ASC`,
-    [intervalSecs, pair, from, to, activeNetwork]
+    [intervalSecs, pair, from, to, network]
   )
 
   return result.rows.map(r => ({
@@ -58,6 +60,9 @@ export async function queryHistory(
  *
  * Returns historical price snapshots for a pair over [from, to], optionally
  * aggregated into 5m or 1h buckets. Defaults to the last 24h at 1m resolution.
+ *
+ * The network is resolved by the network selector (`?network=` / `x-network`,
+ * defaulting to this deployment's active network) and echoed in the response.
  *
  * Note: this path is matched by the x402 `/price` prefix gate, so it requires
  * payment when ORACLE_PAYMENT_ADDRESS is configured — consistent with the other
@@ -101,10 +106,12 @@ export async function registerHistoryRoutes(app: FastifyInstance) {
       })
     }
 
-    const points = await queryHistory(pair, from, to, intervalSecs)
+    const network = req.network ?? activeNetwork
+    const points = await queryHistory(pair, from, to, intervalSecs, network)
 
     return {
       pair,
+      network,
       interval,
       from: from.toISOString(),
       to: to.toISOString(),
