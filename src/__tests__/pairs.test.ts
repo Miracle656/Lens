@@ -36,6 +36,7 @@ vi.mock('../pairsRegistry', () => ({
 }))
 
 import { registerPairsRoutes } from '../routes/pairs'
+import { activeNetwork } from '../config'
 
 const ADMIN_KEY = 'test-admin-key-abc'
 const VALID_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
@@ -176,5 +177,51 @@ describe('GET /pairs', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().pairs).toHaveLength(1)
     expect(res.json().pairs[0].pairKey).toBe('USDC/XLM')
+  })
+
+  describe('query shape', () => {
+    const pair = (pairKey: string) => ({
+      pairKey,
+      assetA: { code: 'XLM', issuer: null },
+      assetB: { code: 'USDC', issuer: VALID_ISSUER },
+    })
+
+    it('probes per watched pair, scoped to the network, instead of scanning history', async () => {
+      mockGetActivePairs.mockReturnValue([pair('A/B'), pair('C/D')])
+      const app = await buildApp()
+      await app.inject({ method: 'GET', url: '/pairs' })
+
+      const [sql, params] = mockQuery.mock.calls[0]
+      expect(sql).not.toMatch(/DISTINCT ON/i)
+      expect(sql).toMatch(/network = \$1/)
+      expect(sql).toMatch(/LATERAL/i)
+      expect(sql).toMatch(/LIMIT 1/i)
+      expect(params).toEqual([activeNetwork, ['A/B', 'C/D']])
+    })
+
+    it('uses the request network when one is resolved', async () => {
+      mockGetActivePairs.mockReturnValue([pair('A/B')])
+      const app2 = Fastify({ logger: false })
+      app2.decorateRequest('network', undefined as any)
+      app2.addHook('onRequest', async (req) => {
+        req.network = 'mainnet'
+      })
+      await registerPairsRoutes(app2)
+      await app2.ready()
+      await app2.inject({ method: 'GET', url: '/pairs' })
+      expect(mockQuery.mock.calls[0][1][0]).toBe('mainnet')
+    })
+
+    it('keeps a quiet pair with its real timestamp and reports an unseen pair as null', async () => {
+      mockGetActivePairs.mockReturnValue([pair('QUIET/X'), pair('NEW/Y')])
+      const old = new Date('2020-01-01T00:00:00Z')
+      mockQuery.mockResolvedValue({ rows: [{ pair_key: 'QUIET/X', price: '1.5', timestamp: old }] })
+      const app = await buildApp()
+      const body = (await app.inject({ method: 'GET', url: '/pairs' })).json()
+
+      expect(body.pairs).toHaveLength(2)
+      expect(body.pairs[0]).toMatchObject({ pairKey: 'QUIET/X', latestPrice: 1.5, lastUpdated: old.toISOString() })
+      expect(body.pairs[1]).toMatchObject({ pairKey: 'NEW/Y', latestPrice: null, lastUpdated: null })
+    })
   })
 })
