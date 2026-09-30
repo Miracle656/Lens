@@ -153,4 +153,54 @@ describe('getBestRoute', () => {
     // Second mainnet call reuses the cached client — only one new Server() call.
     expect(HorizonServerCtor.mock.calls.length).toBe(callsBefore + 1)
   })
+
+  describe('slippagePct', () => {
+    // Fixed pool: 1,000,000 A / 500,000 B, 30 bp fee, so spot = 0.5 B per A.
+    const pool = { rows: [{ reserve_a: '1000000', reserve_b: '500000', fee_bp: '30' }] } as any
+
+    it('is near zero for a tiny order and grows with amount against a fixed pool', async () => {
+      mockCall.mockResolvedValue({ records: [] }) // AMM only
+      mockQuery.mockResolvedValue(pool)
+
+      const small = await getBestRoute(assetA, assetB, pairKey, 1)
+      const medium = await getBestRoute(assetA, assetB, pairKey, 10_000)
+      const large = await getBestRoute(assetA, assetB, pairKey, 500_000)
+
+      // a 1-unit trade only pays the 0.30% fee
+      expect(small.slippagePct).toBeGreaterThan(0.29)
+      expect(small.slippagePct).toBeLessThan(0.31)
+      expect(medium.slippagePct).toBeGreaterThan(small.slippagePct)
+      expect(large.slippagePct).toBeGreaterThan(medium.slippagePct)
+      // 500k into a 1M pool moves the price by roughly a third
+      expect(large.slippagePct).toBeGreaterThan(30)
+    })
+
+    it('matches the constant-product curve exactly for a known order', async () => {
+      mockCall.mockResolvedValue({ records: [] })
+      mockQuery.mockResolvedValue(pool)
+
+      const r = await getBestRoute(assetA, assetB, pairKey, 100_000)
+      const eff = 100_000 * 0.997
+      const exec = (500000 * eff) / (1000000 + eff) / 100_000
+      expect(r.slippagePct).toBeCloseTo(((0.5 - exec) / 0.5) * 100, 6)
+    })
+
+    it('is 0 when there is no AMM pool to give a spot reference', async () => {
+      mockCall.mockResolvedValue({ records: [{ destination_amount: '500' }] })
+      mockQuery.mockResolvedValue({ rows: [] } as any)
+
+      const r = await getBestRoute(assetA, assetB, pairKey, 1000)
+      expect(r.slippagePct).toBe(0)
+    })
+
+    it('does not change which route is selected', async () => {
+      mockCall.mockResolvedValue({ records: [{ destination_amount: '500' }] })
+      mockQuery.mockResolvedValue(pool)
+
+      const r = await getBestRoute(assetA, assetB, pairKey, 1000)
+      expect(r.route).toBe('SDEX')
+      expect(r.estimatedOutput).toBeCloseTo(500, 6)
+      expect(r.slippagePct).toBe(0) // SDEX beats AMM spot: no shortfall
+    })
+  })
 })

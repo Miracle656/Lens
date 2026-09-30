@@ -3,6 +3,7 @@ import { activeNetwork, type NetworkName } from '../config'
 import { getHorizonServer, resetNetworkClients } from '../network/clients'
 import type { AssetId, RouteInfo } from '../types'
 import { pgPool } from '../db'
+import { calculateAMMSpotPrice } from '../pricing/depth'
 
 function assetIdToStellar(asset: AssetId) {
   if (!asset.issuer) return Asset.native()
@@ -12,7 +13,10 @@ function assetIdToStellar(asset: AssetId) {
 // AMM pricing reads price_points/pool_snapshots, which have no network column
 // yet — that is the deeper aggregation-layer work tracked separately. SDEX
 // pricing is a live Horizon call, so it is genuinely per-network today.
-async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
+async function getAMMPrice(
+  pairKey: string,
+  amount: number
+): Promise<{ price: number; spotPrice: number }> {
   // Get latest pool snapshot via pool_id (pairKey indexes price_points correctly)
   const result = await pgPool.query(
     `SELECT DISTINCT ON (ps.pool_id) ps.reserve_a, ps.reserve_b, ps.fee_bp
@@ -25,7 +29,7 @@ async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
      LIMIT 1`,
     [pairKey]
   )
-  if (!result.rows[0]) return 0
+  if (!result.rows[0]) return { price: 0, spotPrice: 0 }
 
   const { reserve_a, reserve_b, fee_bp } = result.rows[0]
   const rA = parseFloat(reserve_a)
@@ -35,7 +39,9 @@ async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
   // Constant product formula: output = (reserveB * amount * fee) / (reserveA + amount * fee)
   const effectiveInput = amount * fee
   const output = (rB * effectiveInput) / (rA + effectiveInput)
-  return output / amount  // price per unit
+  // spotPrice is the reserve-ratio marginal price (no size, no fee); price is
+  // the average execution price for `amount` on the constant-product curve.
+  return { price: output / amount, spotPrice: calculateAMMSpotPrice(rA, rB) }
 }
 
 /**
@@ -74,10 +80,11 @@ export async function getBestRoute(
   amount: number = 1000,
   network: NetworkName = activeNetwork
 ): Promise<RouteInfo> {
-  const [sdexPrice, ammPrice] = await Promise.all([
+  const [sdexPrice, amm] = await Promise.all([
     getSDEXPrice(assetA, assetB, amount, network),
     getAMMPrice(pairKey, amount),
   ])
+  const ammPrice = amm.price
 
   let route: RouteInfo['route'] = 'UNKNOWN'
   let estimatedOutput = 0
@@ -99,7 +106,7 @@ export async function getBestRoute(
       // Within 0.1% — suggest split for large orders
       route = amount > 10000 ? 'SPLIT' : (sdexPrice >= ammPrice ? 'SDEX' : 'AMM')
       estimatedOutput = Math.max(sdexPrice, ammPrice) * amount
-      recommendation = diff < 0.001 ? 'Prices within 0.1% — either route suitable' : 'SPLIT may reduce slippage for large orders'
+      recommendation = 'Prices within 0.1% — either route suitable'
     } else if (sdexPrice > ammPrice) {
       route = 'SDEX'
       estimatedOutput = sdexPrice * amount
@@ -111,8 +118,16 @@ export async function getBestRoute(
     }
   }
 
-  const spotPrice = Math.max(sdexPrice, ammPrice)
-  const slippagePct = spotPrice > 0 ? Math.abs((estimatedOutput / amount - spotPrice) / spotPrice * 100) : 0
+  // Slippage is the shortfall of the execution price against a true spot
+  // reference: the AMM reserve-ratio price, which does not depend on the trade
+  // size. (The old code compared the execution price with itself, so it was
+  // always 0.) With no AMM pool there is no size-independent reference for
+  // SDEX, so slippage is reported as 0 rather than guessed. An execution price
+  // at or above spot is not slippage, hence the clamp.
+  const spotPrice = amm.spotPrice
+  const executionPrice = amount > 0 ? estimatedOutput / amount : 0
+  const slippagePct =
+    spotPrice > 0 ? Math.max(0, ((spotPrice - executionPrice) / spotPrice) * 100) : 0
 
   return { route, sdexPrice, ammPrice, estimatedOutput, slippagePct, recommendation }
 }
