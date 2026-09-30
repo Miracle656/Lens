@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { Networks } from '@stellar/stellar-sdk'
+import { Networks, StrKey } from '@stellar/stellar-sdk'
 import type { WatchedPair, AssetId } from './types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -94,6 +94,21 @@ function parseWatchedPairs(raw: string): WatchedPair[] {
  *   2. Generic env var — e.g. HORIZON_URL   (back-compat with single-network setups)
  *   3. Sensible default for that network
  */
+/**
+ * True when `id` is a well-formed Soroban contract id (`C...`, 56 chars,
+ * valid checksum). A malformed id otherwise surfaces later as an opaque decode
+ * error on every RPC call, so config refuses to hand one out: on failure it
+ * warns, naming the env var, and the caller disables the feature that needs it.
+ */
+function isUsableContractId(id: string, envVar: string): boolean {
+  if (id === '') return false
+  if (StrKey.isValidContract(id)) return true
+  console.warn(
+    `[config] ${envVar}="${id}" is not a valid Soroban contract id (expected a 56-character C... address); the feature that needs it is disabled`
+  )
+  return false
+}
+
 function buildNetworkConfig(network: NetworkName): NetworkConfig {
   const suffix = network.toUpperCase() as 'TESTNET' | 'MAINNET'
 
@@ -125,7 +140,7 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     process.env.SOROSWAP_FACTORY_ADDRESS ||
     (network === 'mainnet'
       ? 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2'
-      : 'CDKP5WSEZMDL53VZFPBGCL47WBPKFCN5OPYQVXB3CJWUXHPZRPHSSZ3')
+      : 'CDP3HMUH6SMS3S7NPGNDJLULCOXXEPSHY4JKUKMBNQMATHDHWXRRJTBY')
 
   // Soroswap token-list is a single canonical list covering both networks by
   // default, but can be overridden per network (e.g. a testnet-specific list).
@@ -135,7 +150,8 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
 
   const soroswapEnabled =
-    (process.env[`SOROSWAP_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false'
+    (process.env[`SOROSWAP_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false' &&
+    isUsableContractId(soroswapFactory, `SOROSWAP_FACTORY_ADDRESS_${suffix}`)
 
   const soroswapPollMs = parseInt(
     process.env[`SOROSWAP_POLL_INTERVAL_MS_${suffix}`] ||
@@ -156,16 +172,18 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     (process.env[`AQUARIUS_ENABLED_${suffix}`] ?? (network === 'mainnet' ? 'true' : 'false')).toLowerCase() !== 'false'
 
   // ── Reflector oracle ──────────────────────────────────────────────────────
+  // No built-in default: the previous mainnet literal was a malformed
+  // (55-character) id and a replacement could not be verified against
+  // Reflector's published deployments. Set REFLECTOR_CONTRACT_ID_<NETWORK> to
+  // the oracle contract listed at https://reflector.network to enable it.
   const reflectorContractId =
     process.env[`REFLECTOR_CONTRACT_ID_${suffix}`] ||
     process.env.REFLECTOR_CONTRACT_ID ||
-    (network === 'mainnet'
-      ? 'CCYXZMNHFXHKF3YEX4VJJ5TH3YHCVZIBPNBGM7C4PJIMCIMNNWDOQYA'
-      : '')
+    ''
 
   const oracleEnabled =
     (process.env[`REFLECTOR_ENABLED_${suffix}`] ?? 'true').toLowerCase() !== 'false' &&
-    reflectorContractId !== ''
+    isUsableContractId(reflectorContractId, `REFLECTOR_CONTRACT_ID_${suffix}`)
 
   // ── Watched pairs ─────────────────────────────────────────────────────────
   // Mainnet gets a default for the same reason every field above does: turning

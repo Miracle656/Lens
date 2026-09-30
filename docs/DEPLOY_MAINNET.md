@@ -47,8 +47,8 @@ UptimeRobot ──GET /status──▶ Render web service (Lens)
 | `HORIZON_URL` | `https://horizon-testnet.stellar.org` | `https://horizon.stellar.org` |
 | `RPC_URL` | `https://soroban-testnet.stellar.org` | external provider — **placeholder only** (see below) |
 | `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | `Public Global Stellar Network ; September 2015` |
-| `SOROSWAP_FACTORY_ADDRESS` | `CDKP5WSEZMDL53VZFPBGCL47WBPKFCN5OPYQVXB3CJWUXHPZRPHSSZ3` | `CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2` |
-| `REFLECTOR_CONTRACT_ID` | *(empty)* | `CCYXZMNHFXHKF3YEX4VJJ5TH3YHCVZIBPNBGM7C4PJIMCIMNNWDOQYA` |
+| `SOROSWAP_FACTORY_ADDRESS` | `CDP3HMUH6SMS3S7NPGNDJLULCOXXEPSHY4JKUKMBNQMATHDHWXRRJTBY` | `CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2` |
+| `REFLECTOR_CONTRACT_ID` | *(empty)* | *(required to enable the oracle — copy from reflector.network)* |
 | `WATCHED_PAIRS` | testnet USDC issuer | mainnet USDC issuer |
 | `DATABASE_URL` | testnet DB | **separate** mainnet DB |
 | `REDIS_URL` | testnet Redis | **separate** mainnet Redis |
@@ -148,7 +148,7 @@ HORIZON_URL_MAINNET=https://horizon.stellar.org
 RPC_URL_MAINNET=https://your-provider.example.com/soroban-rpc   # placeholder
 NETWORK_PASSPHRASE_MAINNET=Public Global Stellar Network ; September 2015
 SOROSWAP_FACTORY_ADDRESS_MAINNET=CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2
-REFLECTOR_CONTRACT_ID_MAINNET=CCYXZMNHFXHKF3YEX4VJJ5TH3YHCVZIBPNBGM7C4PJIMCIMNNWDOQYA
+REFLECTOR_CONTRACT_ID_MAINNET=   # copy from https://reflector.network; empty disables the oracle
 WATCHED_PAIRS_MAINNET=XLM:native/USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
 
 # --- Storage (separate from testnet) ---

@@ -27,7 +27,7 @@ other's VWAP/aggregates. Redis keys need a per-network prefix too.
 | `RPC_URL` | `https://soroban-testnet.stellar.org` | external provider (**secret — host env only**) |
 | `NETWORK_PASSPHRASE` | `Test SDF Network ; September 2015` | `Public Global Stellar Network ; September 2015` |
 | `SOROSWAP_FACTORY_ADDRESS` | (n/a on testnet) | `CA4HEQTL…` |
-| `REFLECTOR_CONTRACT_ID` | — | `CCYXZMNH…` |
+| `REFLECTOR_CONTRACT_ID` | — | *(required to enable the oracle)* |
 | `WATCHED_PAIRS` | testnet USDC issuer | mainnet USDC issuer |
 | `DATABASE_URL` / `REDIS_URL` | testnet | **separate** mainnet instances |
 
