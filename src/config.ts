@@ -44,8 +44,14 @@ export interface NetworkConfig {
   facilitator: {
     /** Secret key for the facilitator's fee-paying account */
     secretKey?: string
-    /** Maximum fee in stroops the facilitator will pay */
+    /** Maximum fee in stroops the facilitator will pay per settlement (#147) */
     feeStroops: number
+    /**
+     * Rolling UTC-day spend ceiling (stroops) for sponsored fees on this
+     * network. Independent of the per-settlement cap. Tracked in Redis and
+     * enforced fail-closed (#147).
+     */
+    dailySpendCeilingStroops: number
   }
 }
 
@@ -210,6 +216,33 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     10
   )
 
+  // Per-network daily ceilings: mainnet defaults tighter than testnet so a
+  // drained test faucet cannot be confused with mainnet exposure (#147).
+  const facilitatorDailyDefault = network === 'mainnet' ? '10000000' : '100000000'
+  // A safety control must not be able to silently disable itself.
+  // `parseInt` returns NaN for a typo'd value and `newTotal > NaN` is always
+  // false, so the cap would be off with nothing in the logs — and it parses
+  // "1e8" as 1, which would brick settlement. Require a positive safe
+  // integer, otherwise fall back to the default and say so loudly.
+  const spendCeilingRaw =
+    process.env[`FACILITATOR_DAILY_SPEND_STROOPS_${suffix}`] ||
+    process.env.FACILITATOR_DAILY_SPEND_STROOPS
+  const parsedSpendCeiling = Number(spendCeilingRaw)
+  const spendCeilingValid =
+    spendCeilingRaw !== undefined &&
+    Number.isSafeInteger(parsedSpendCeiling) &&
+    parsedSpendCeiling > 0
+  if (spendCeilingRaw !== undefined && !spendCeilingValid) {
+    console.warn(
+      `[config] FACILITATOR_DAILY_SPEND_STROOPS_${suffix} is not a positive safe integer ` +
+        `(${JSON.stringify(spendCeilingRaw)}); falling back to the default ` +
+        `${facilitatorDailyDefault} stroops.`,
+    )
+  }
+  const facilitatorDailySpendCeilingStroops = spendCeilingValid
+    ? parsedSpendCeiling
+    : Number(facilitatorDailyDefault)
+
   return {
     horizon: { url: horizonUrl },
     rpc: { url: rpcUrl },
@@ -226,7 +259,11 @@ function buildNetworkConfig(network: NetworkName): NetworkConfig {
     },
     oracle: { enabled: oracleEnabled, reflectorContractId },
     pairs: parseWatchedPairs(rawPairs),
-    facilitator: { secretKey: facilitatorSecretKey, feeStroops: facilitatorFeeStroops },
+    facilitator: {
+      secretKey: facilitatorSecretKey,
+      feeStroops: facilitatorFeeStroops,
+      dailySpendCeilingStroops: facilitatorDailySpendCeilingStroops,
+    },
   }
 }
 
