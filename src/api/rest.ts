@@ -107,10 +107,9 @@ export async function registerRESTRoutes(app: FastifyInstance) {
       const pair = findPair(assetA, assetB, network)
       if (!pair) return reply.status(404).send({ error: `Pair ${assetA}/${assetB} not watched on ${network}` })
 
-      // Cache key is network-scoped so testnet/mainnet prices for the same
-      // asset codes never collide.
-      const cacheKey = `${network}:${pair.pairKey}`
-      const cached = await getCachedPrice(cacheKey)
+      // The helper owns the key shape and scopes it by network, so testnet
+      // and mainnet prices for the same asset codes never collide.
+      const cached = await getCachedPrice(network, pair.pairKey)
       if (cached) {
         try {
           reply.header('X-Cache', 'HIT')
@@ -130,7 +129,7 @@ export async function registerRESTRoutes(app: FastifyInstance) {
         lastUpdated: new Date().toISOString(),
       }
 
-      await setCachedPrice(cacheKey, result, config.cache.priceTtl)
+      await setCachedPrice(network, pair.pairKey, result, config.cache.priceTtl)
       reply.header('X-Cache', 'MISS')
       return result
     }
