@@ -9,21 +9,23 @@ function assetIdToStellar(asset: AssetId) {
   return new Asset(asset.code, asset.issuer)
 }
 
-// AMM pricing reads price_points/pool_snapshots, which have no network column
-// yet — that is the deeper aggregation-layer work tracked separately. SDEX
-// pricing is a live Horizon call, so it is genuinely per-network today.
-async function getAMMPrice(pairKey: string, amount: number): Promise<number> {
+// AMM pricing is per-network on both legs of the lookup: the pool_snapshots
+// scan and the price_points subquery that names which pools hold this pair.
+// Pool ids are only unique within a network, so filtering just the outer scan
+// would happily price a mainnet pair off a testnet pool's reserves.
+async function getAMMPrice(pairKey: string, amount: number, network: NetworkName): Promise<number> {
   // Get latest pool snapshot via pool_id (pairKey indexes price_points correctly)
   const result = await pgPool.query(
     `SELECT DISTINCT ON (ps.pool_id) ps.reserve_a, ps.reserve_b, ps.fee_bp
      FROM pool_snapshots ps
-     WHERE ps.pool_id IN (
-       SELECT DISTINCT pool_id FROM price_points
-       WHERE pair_key = $1 AND source = 'AMM' AND pool_id IS NOT NULL
-     )
+     WHERE ps.network = $2
+       AND ps.pool_id IN (
+         SELECT DISTINCT pool_id FROM price_points
+         WHERE pair_key = $1 AND network = $2 AND source = 'AMM' AND pool_id IS NOT NULL
+       )
      ORDER BY ps.pool_id, ps.timestamp DESC
      LIMIT 1`,
-    [pairKey]
+    [pairKey, network]
   )
   if (!result.rows[0]) return 0
 
@@ -76,7 +78,7 @@ export async function getBestRoute(
 ): Promise<RouteInfo> {
   const [sdexPrice, ammPrice] = await Promise.all([
     getSDEXPrice(assetA, assetB, amount, network),
-    getAMMPrice(pairKey, amount),
+    getAMMPrice(pairKey, amount, network),
   ])
 
   let route: RouteInfo['route'] = 'UNKNOWN'

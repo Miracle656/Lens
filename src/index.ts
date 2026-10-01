@@ -43,7 +43,7 @@ import { startSoroswapIngester } from './ingesters/soroswap'
 import { startSnapshotIngester } from './ingesters/snapshot'
 import { startAquariusIngester } from './ingest/venues/aquarius'
 import { createAggregateQueue, startAggregateWorker, scheduleAggregateRefresh } from './jobs/aggregateRefresh'
-import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention, pruneOldSnapshots, SNAPSHOT_RETENTION_DAYS } from './jobs/snapshotRetention'
+import { createSnapshotRetentionQueue, startSnapshotRetentionWorker, scheduleSnapshotRetention, pruneAllNetworks, SNAPSHOT_RETENTION_DAYS } from './jobs/snapshotRetention'
 import { loadPersistedPairs, getActivePairs } from './pairsRegistry'
 import { getMetrics } from './metrics'
 
@@ -185,17 +185,27 @@ async function main() {
   // without our error handler on them. If scheduling fails they are still
   // live, reconnecting forever and logging "[ioredis] Unhandled error event"
   // on every attempt — so close whatever got created before giving up.
+  //
+  // One queue + worker per enabled network: a single pair of them would only
+  // ever write price_aggregates for whichever network it was pinned to, and
+  // /price/*/history and /screener would stay empty for the other.
   {
-    let queue: ReturnType<typeof createAggregateQueue> | undefined
-    let worker: ReturnType<typeof startAggregateWorker> | undefined
-    try {
-      queue = createAggregateQueue()
-      worker = startAggregateWorker()
-      await scheduleAggregateRefresh(queue)
-      console.log('[lens] Aggregate refresh worker started')
-    } catch (err) {
-      console.warn('[lens] Aggregate refresh worker skipped (Redis unavailable):', (err as Error).message)
-      await Promise.allSettled([queue?.close(), worker?.close()])
+    const started: NetworkName[] = []
+    for (const network of getEnabledNetworks()) {
+      let queue: ReturnType<typeof createAggregateQueue> | undefined
+      let worker: ReturnType<typeof startAggregateWorker> | undefined
+      try {
+        queue = createAggregateQueue(network)
+        worker = startAggregateWorker(network)
+        await scheduleAggregateRefresh(queue, network)
+        started.push(network)
+      } catch (err) {
+        console.warn(`[lens] Aggregate refresh worker skipped for ${network} (Redis unavailable):`, (err as Error).message)
+        await Promise.allSettled([queue?.close(), worker?.close()])
+      }
+    }
+    if (started.length > 0) {
+      console.log(`[lens] Aggregate refresh worker started for network(s): ${started.join(', ')}`)
     }
   }
 
@@ -210,9 +220,11 @@ async function main() {
   // work in-process.
   const safePrune = async () => {
     try {
-      const pruned = await pruneOldSnapshots()
-      if (pruned > 0) {
-        console.log(`[lens] Pruned ${pruned} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+      const counts = await pruneAllNetworks()
+      for (const [network, pruned] of Object.entries(counts)) {
+        if (pruned > 0) {
+          console.log(`[lens] Pruned ${pruned} ${network} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+        }
       }
     } catch (err) {
       console.error('[lens] Snapshot prune failed:', (err as Error).message)

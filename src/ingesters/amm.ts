@@ -1,12 +1,22 @@
 import { amm_snapshots_total, trades_ingested_total, last_trade_timestamp } from '../metrics'
 import { config, activeNetwork, getNetworkConfig, type NetworkName } from '../config'
 import { getActivePairs } from '../pairsRegistry'
-import { upsertPricePoints, getIndexerCursor, setIndexerCursor, prisma } from '../db'
+import { upsertPricePoints, getIndexerState, setIndexerCursor, prisma } from '../db'
+import { resolvePageLedgers } from './toid'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
+// Last seen price per (network, pairKey) — used for threshold crossing detection
 const lastPrice = new Map<string, number>()
+
+export function _resetLastPrice(): void {
+  lastPrice.clear()
+}
+
+export function _getLastPrice(network: NetworkName, pairKey: string): number | undefined {
+  return lastPrice.get(`${network}:${pairKey}`)
+}
 
 export async function fetchPools(pair: WatchedPair, network: NetworkName = activeNetwork): Promise<any[]> {
   try {
@@ -54,7 +64,7 @@ export async function snapshotPool(
 
     await prisma.poolSnapshot.create({
       data: {
-        network: activeNetwork,
+        network,
         poolId: pool.id,
         assetA: pair.assetA.code,
         assetB: pair.assetB.code,
@@ -68,7 +78,7 @@ export async function snapshotPool(
       },
     })
 
-    amm_snapshots_total.inc({ pool: pool.id })
+    amm_snapshots_total.inc({ pool: pool.id, network })
 
     // Also record spot price as a price point (no volume — it's a snapshot, not a trade)
     if (spotPrice > 0) {
@@ -86,8 +96,9 @@ export async function snapshotPool(
         eventId: `amm-snapshot-${pool.id}-${Date.now()}`,
       }], network)
 
-      const previousPrice = lastPrice.get(pair.pairKey) ?? spotPrice
-      lastPrice.set(pair.pairKey, spotPrice)
+      const trackerKey = `${network}:${pair.pairKey}`
+      const previousPrice = lastPrice.get(trackerKey) ?? spotPrice
+      lastPrice.set(trackerKey, spotPrice)
 
       publishPriceUpdate({
         pair: pair.pairKey,
@@ -101,6 +112,7 @@ export async function snapshotPool(
         assetB: pair.assetB.code,
         previousPrice,
         currentPrice: spotPrice,
+        network,
       }).catch(err => console.error('[amm] webhook dispatch error:', err.message))
     }
   } catch (err) {
@@ -114,7 +126,8 @@ export async function ingestPoolTrades(
   network: NetworkName = activeNetwork
 ): Promise<void> {
   const stateId = `amm:${network}:${pool.id}`
-  const cursor = await getIndexerCursor(stateId, network) ?? '0'
+  const state = await getIndexerState(stateId, network)
+  const cursor = state.cursor ?? '0'
 
   try {
     const response = await fetch(
@@ -125,7 +138,17 @@ export async function ingestPoolTrades(
 
     if (!records.length) return
 
-    const points = records.map((t: any) => {
+    // Horizon returns no `ledger` on a pool trade; it lives in the TOID prefix.
+    const ledgers = resolvePageLedgers(
+      records.map((t: any) => t.paging_token ?? t.id),
+      state.ledger,
+    )
+    if (ledgers === null) {
+      console.error(`[amm] pool ${pool.id.slice(0, 8)}: no ledger derivable from ${records.length} trades; skipping batch`)
+      return
+    }
+
+    const points = records.map((t: any, i: number) => {
       const baseCode = t.base_asset_type === 'native' ? 'XLM' : t.base_asset_code
       const isForward = baseCode === pair.assetA.code
       const price = isForward
@@ -141,24 +164,27 @@ export async function ingestPoolTrades(
         price,
         baseVolume: parseFloat(t.base_amount),
         counterVolume: parseFloat(t.counter_amount),
-        ledger: 0,
+        ledger: ledgers[i],
         timestamp: new Date(t.ledger_close_time),
         eventId: t.id,
       }
     })
 
-    const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
+    const trackerKey = `${network}:${pair.pairKey}`
+    const previousPrice = lastPrice.get(trackerKey) ?? points[0].price
     const currentPrice = points[points.length - 1].price
 
     await upsertPricePoints(points, network)
-    lastPrice.set(pair.pairKey, currentPrice)
+    lastPrice.set(trackerKey, currentPrice)
 
-    // Metrics instrumentation
-    trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
-    last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
+    // Metrics instrumentation. `network` is the loop's own network, not
+    // `activeNetwork` — one ingester set runs per enabled network and they all
+    // share this registry.
+    trades_ingested_total.inc({ pair: pair.pairKey, network }, points.length)
+    last_trade_timestamp.set({ pair: pair.pairKey, network }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
-    const lastCursor = records[records.length - 1].paging_token
-    await setIndexerCursor(stateId, lastCursor, network)
+    const lastRecord = records[records.length - 1]
+    await setIndexerCursor(stateId, lastRecord.paging_token, network, ledgers[ledgers.length - 1])
     console.log(`[amm] Pool ${pool.id.slice(0, 8)}: ingested ${points.length} trades`)
 
     publishPriceUpdate({
@@ -173,6 +199,7 @@ export async function ingestPoolTrades(
       assetB: pair.assetB.code,
       previousPrice,
       currentPrice,
+      network,
     }).catch(err => console.error('[amm] webhook dispatch error:', err.message))
   } catch (err) {
     console.error(`[amm] Trade ingest error for pool ${pool.id}:`, (err as Error).message)

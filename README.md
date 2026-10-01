@@ -15,9 +15,11 @@ Aggregates price data from Stellar's Classic Order Book (SDEX) and AMM Liquidity
 | Method | Path | Description |
 |---|---|---|
 | GET | `/price/:assetA/:assetB` | Current VWAP, 24h volume, best route |
+| GET | `/price/twap/:assetA/:assetB` | TWAP pricing over a time window |
+| GET | `/price/vwap/:assetA/:assetB` | VWAP pricing over a time window |
 | GET | `/price/:assetA/:assetB/route?amount=1000` | Best execution route for a given amount |
 | GET | `/price/:assetA/:assetB/history?window=1h` | OHLCV history (`1m`, `5m`, `1h`, `24h`) |
-| GET | `/prices/history?pair=XLM/USDC&from=…&to=…&interval=1m` | Historical 1-minute price snapshots, optionally aggregated (`1m`, `5m`, `1h`); ~30-day retention |
+| GET | `/prices/history?pair=XLM/USDC&from=…&to=…&interval=1m` | Historical 1-minute price snapshots, optionally aggregated (`1m`, `5m`, `1h`); honours `?network=`; ~30-day retention |
 | GET | `/pools` | Active AMM pools being watched |
 | GET | `/pairs` | Watched trading pairs |
 | GET | `/status` | Indexer health |
@@ -25,11 +27,19 @@ Aggregates price data from Stellar's Classic Order Book (SDEX) and AMM Liquidity
 
 Every route accepts an optional `?network=testnet\|mainnet` query param (or
 `x-network` header) to pick the Stellar network — default is `testnet`. An
-unrecognised value gets `400`. The `/price/*` endpoints' live SDEX pricing and
-x402 payment `network`/`payTo` are fully per-request today; DB-backed reads
-(candles, history, pools, AMM pricing) are still served from whichever
-network this instance is currently indexing (`STELLAR_NETWORK`) — that data
-layer isn't network-partitioned yet.
+unrecognised value gets `400`, and an omitted value falls back to this
+instance's `STELLAR_NETWORK`.
+
+Per-request today: `/price/:assetA/:assetB` (its VWAP, OHLCV, AMM and
+best-route reads), `/price/:assetA/:assetB/route`, `/price/:assetA/:assetB/depth`,
+`/prices/history`, `/screener`, `/pools`, and the x402 payment
+`network`/`payTo`.
+
+Still reading across both networks, and ignoring the parameter:
+`/candles/:assetA/:assetB`, `/price/twap/*`, `/price/vwap/*`, and
+`/price/:assetA/:assetB/history` — the last one reads `price_aggregates`, which
+is now written per network, so on an instance running both networks
+(`ENABLED_NETWORKS`) its buckets interleave the two chains.
 
 ```bash
 curl "https://api.example.com/price/XLM/USDC?network=mainnet"
@@ -91,6 +101,22 @@ histogram_quantile(0.95,
 
 See [`docs/http-metrics.md`](docs/http-metrics.md) for the full label reference,
 the bucket rationale and suggested alerting rules.
+
+The ingestion metrics are labelled by `network` as well, so a dual-network
+deployment reports each network separately:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `trades_ingested_total` | Counter | `pair`, `network` |
+| `amm_snapshots_total` | Counter | `pool`, `network` |
+| `price_snapshots_total` | Counter | `network` |
+| `last_trade_timestamp` | Gauge | `pair`, `network` |
+
+`last_trade_timestamp` is a gauge, so without the `network` label one network's
+ingester overwrites the other's value for the same pair — which would make the
+staleness signal silently unusable. See
+[`docs/ingest-metrics.md`](docs/ingest-metrics.md) for the cardinality notes
+(`pairs x networks`) and a staleness alert.
 
 ### GraphQL Subscriptions (live prices)
 
@@ -163,11 +189,18 @@ Lens gates `/price`, `/pools`, and `/candles` behind x402 micropayments on Stell
 curl http://localhost:3002/status
 # {
 #   "ok": true,
+#   "network": "testnet",
 #   "watchedPairs": ["XLM:native/USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"],
 #   "lastIndexedLedger": 53842917,
-#   "lastProcessedAt": "2026-05-07T18:45:11.220Z"
+#   "lastProcessedAt": "2026-05-07T18:45:11.220Z",
+#   "ingestLagSeconds": 4
 # }
 ```
+
+`/status` answers for one network — pass `?network=mainnet` (or the
+`x-network` header) to check the mainnet indexer instead. `ingestLagSeconds` is
+`null` until that network has ingested, and `lastIndexedLedger` is `null` until
+its SDEX ingester has recorded a trade.
 
 ### 2. Paid request without `X-PAYMENT` → `402` with payment requirements
 

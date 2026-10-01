@@ -1,5 +1,13 @@
 import type { FastifyInstance } from 'fastify'
 import { pgPool } from '../db'
+import { activeNetwork } from '../config'
+import '../middleware/network' // declares req.network on the FastifyRequest type
+
+// Lens has no circulating-supply data, so a market cap cannot be computed. It
+// used to be reported as a copy of `liquidity`; a caller who sorts or filters on
+// it must be told it is gone rather than have the parameter silently ignored.
+const MARKET_CAP_UNSUPPORTED =
+  'market_cap is not supported: Lens has no circulating supply data to compute it from. Use liquidity instead'
 
 export async function registerScreenerRoutes(app: FastifyInstance) {
   app.get<{
@@ -7,7 +15,7 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
       volume?: string
       change_24h_min?: string
       change_24h_max?: string
-      market_cap?: string
+      market_cap?: string // rejected with a 400, see MARKET_CAP_UNSUPPORTED
       price_min?: string
       price_max?: string
       liquidity?: string
@@ -26,7 +34,11 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: 'limit must be a valid integer' })
       }
 
-      const allowedSortFields = ['volume', 'change_24h', 'market_cap', 'price', 'liquidity']
+      if (q.market_cap !== undefined || q.sortBy === 'market_cap') {
+        return reply.status(400).send({ error: MARKET_CAP_UNSUPPORTED })
+      }
+
+      const allowedSortFields = ['volume', 'change_24h', 'price', 'liquidity']
       const sortBy = q.sortBy ?? 'volume'
       if (!allowedSortFields.includes(sortBy)) {
         return reply.status(400).send({ error: `sortBy must be one of: ${allowedSortFields.join(', ')}` })
@@ -43,7 +55,6 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
         volume: parseNum(q.volume),
         change_24h_min: parseNum(q.change_24h_min),
         change_24h_max: parseNum(q.change_24h_max),
-        market_cap: parseNum(q.market_cap),
         price_min: parseNum(q.price_min),
         price_max: parseNum(q.price_max),
         liquidity: parseNum(q.liquidity),
@@ -57,8 +68,10 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
 
       // 3. Build query parameters and WHERE conditions
       const conditions: string[] = []
-      const params: any[] = []
-      let paramIdx = 1
+      // Every CTE below is scoped to one network: testnet and mainnet rows share
+      // these tables, and pooling them would rank a pair on the other chain's data.
+      const params: any[] = [req.network ?? activeNetwork]
+      let paramIdx = 2
 
       if (filters.volume !== undefined) {
         conditions.push(`volume >= $${paramIdx++}`)
@@ -84,10 +97,6 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
         conditions.push(`liquidity >= $${paramIdx++}`)
         params.push(filters.liquidity)
       }
-      if (filters.market_cap !== undefined) {
-        conditions.push(`market_cap >= $${paramIdx++}`)
-        params.push(filters.market_cap)
-      }
 
       // 4. Cursor decoding and pagination condition
       if (q.cursor) {
@@ -112,13 +121,14 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
         WITH pair_pools AS (
           SELECT DISTINCT pair_key, pool_id 
           FROM price_points 
-          WHERE source = 'AMM' AND pool_id IS NOT NULL
+          WHERE network = $1 AND source = 'AMM' AND pool_id IS NOT NULL
         ),
         latest_snapshots AS (
           SELECT DISTINCT ON (ps.pool_id) 
             ps.pool_id, 
             (ps.reserve_a * ps.spot_price + ps.reserve_b) AS pool_liq
           FROM pool_snapshots ps
+          WHERE ps.network = $1
           ORDER BY ps.pool_id, ps.timestamp DESC
         ),
         pair_liquidity AS (
@@ -137,7 +147,7 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
               ELSE 0 
             END AS change_24h
           FROM price_aggregates
-          WHERE window = '24h'
+          WHERE network = $1 AND window = '24h'
           ORDER BY pair_key, bucket DESC
         ),
         screener_data AS (
@@ -146,8 +156,7 @@ export async function registerScreenerRoutes(app: FastifyInstance) {
             la.volume,
             la.price,
             la.change_24h,
-            COALESCE(pl.liquidity::float, 0) AS liquidity,
-            COALESCE(pl.liquidity::float, 0) AS market_cap
+            COALESCE(pl.liquidity::float, 0) AS liquidity
           FROM latest_aggregates la
           LEFT JOIN pair_liquidity pl ON pl.pair_key = la.pair_key
         )

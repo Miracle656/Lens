@@ -1,11 +1,20 @@
 import { Queue, Worker } from 'bullmq'
-import { config, activeNetwork } from '../config'
-import { pgPool, prisma } from '../db'
+import { config, getNetworkConfig, type NetworkName } from '../config'
+import { prisma } from '../db'
 import { setCachedPrice } from '../redis'
 import { calculateVWAP, calculateOHLCV, getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 
-const QUEUE_NAME = `${activeNetwork}:aggregate-refresh`
+/**
+ * One queue, worker and job stream per network. Everything a job touches —
+ * the queue it lives on, the pairs it iterates, every aggregator read, the
+ * cache key and the price_aggregates upsert — is stamped with that job's
+ * network, so a second enabled network gets its own aggregates instead of
+ * having them overwritten by whichever network ran last.
+ */
+function queueName(network: NetworkName): string {
+  return `${network}:aggregate-refresh`
+}
 
 function redisConnection() {
   const url = process.env.REDIS_URL
@@ -13,29 +22,33 @@ function redisConnection() {
   return { host: 'localhost', port: 6379 }
 }
 
-export function createAggregateQueue() {
-  return new Queue(QUEUE_NAME, { connection: redisConnection() })
+export function createAggregateQueue(network: NetworkName) {
+  return new Queue(queueName(network), { connection: redisConnection() })
 }
 
-export function startAggregateWorker() {
+export function startAggregateWorker(network: NetworkName) {
   const worker = new Worker(
-    QUEUE_NAME,
+    queueName(network),
     async (job) => {
       const { pairKey, pair } = job.data
       try {
-        const agg = await getAggregatedPrice(pairKey)
-        const route = await getBestRoute(pair.assetA, pair.assetB, pairKey, 1000)
+        const agg = await getAggregatedPrice(pairKey, network)
+        const route = await getBestRoute(pair.assetA, pair.assetB, pairKey, 1000, network)
 
         const result = {
           assetA: pair.assetA.code,
           assetB: pair.assetB.code,
           pairKey,
+          // The cache key this is stored under is what /price/:a/:b reads, so
+          // the payload has to carry the same network the route stamps — a
+          // cache hit is served verbatim, network field included.
+          network,
           ...agg,
           bestRoute: route.route,
           lastUpdated: new Date(),
         }
 
-        // Cache in Redis. The key is built from (network, pairKey) inside the
+// Cache in Redis. The key is built from (network, pairKey) inside the
         // helper, so this write and the /price route's read produce the same key.
         await setCachedPrice(activeNetwork, pairKey, result, config.cache.priceTtl)
 
@@ -51,19 +64,19 @@ export function startAggregateWorker() {
         bucket.setSeconds(0, 0)
 
         for (const w of windows) {
-          const [vwap, sdexVwap, ammVwap, ohlcv'] = await Promise.all([
-            calculateVWAP(pairKey, w.minutes),
-            calculateVWAP(pairKey, w.minutes, 'SDEX'),
-            calculateVWAP(pairKey, w.minutes, 'AMM'),
-            calculateOHLCV(pairKey, w.minutes),
+const [vwap, sdexVwap, ammVwap, ohlcv] = await Promise.all([
+            calculateVWAP(pairKey, w.minutes, network),
+            calculateVWAP(pairKey, w.minutes, network, 'SDEX'),
+            calculateVWAP(pairKey, w.minutes, network, 'AMM'),
+            calculateOHLCV(pairKey, w.minutes, network),
           ])
 
           if (vwap === 0) continue
 
           await prisma.priceAggregate.upsert({
-            where: { network_pairKey_window_bucket: { network: activeNetwork, pairKey, window: w.key, bucket } },
+            where: { network_pairKey_window_bucket: { network, pairKey, window: w.key, bucket } },
             create: {
-              network: activeNetwork, pairKey, window: w.key, bucket,
+              network, pairKey, window: w.key, bucket,
               vwap, sdexVwap: sdexVwap || null, ammVwap: ammVwap || null,
               volume: ohlcv?.volume ?? 0, tradeCount: ohlcv?.tradeCount ?? 0,
               openPrice: ohlcv?.open || null, closePrice: ohlcv?.close || null,
@@ -77,9 +90,9 @@ export function startAggregateWorker() {
           })
         }
 
-        console.log(`[aggregator] Refreshed ${pairKey}: price=${agg.price.toFixed(6)}, route=${route.route}`)
+        console.log(`[aggregator] Refreshed ${network}/${pairKey}: price=${agg.price.toFixed(6)}, route=${route.route}`)
       } catch (err) {
-        console.error(`[aggregator] Failed for ${pairKey}:`, (err as Error).message)
+        console.error(`[aggregator] Failed for ${network}/${pairKey}:`, (err as Error).message)
       }
     },
     { connection: redisConnection(), concurrency: 5 }
@@ -92,15 +105,15 @@ export function startAggregateWorker() {
   return worker
 }
 
-export async function scheduleAggregateRefresh(queue: Queue) {
-  // Repeat every 60 seconds for each watched pair
-  for (const pair of config.pairs) {
+export async function scheduleAggregateRefresh(queue: Queue, network: NetworkName) {
+  // Repeat every 60 seconds for each pair this network watches
+  for (const pair of getNetworkConfig(network).pairs) {
     await queue.add(
       'refresh',
-      { pairKey: pair.pairKey, pair },
-      { repeat: { every: 60_000 }, jobId: `refresh:${pair.pairKey}` }
+      { pairKey: pair.pairKey, pair, network },
+      { repeat: { every: 60_000 }, jobId: `refresh:${network}:${pair.pairKey}` }
     )
     // Also run immediately on startup
-    await queue.add('refresh', { pairKey: pair.pairKey, pair })
+    await queue.add('refresh', { pairKey: pair.pairKey, pair, network })
   }
 }

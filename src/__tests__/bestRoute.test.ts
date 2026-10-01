@@ -153,4 +153,22 @@ describe('getBestRoute', () => {
     // Second mainnet call reuses the cached client — only one new Server() call.
     expect(HorizonServerCtor.mock.calls.length).toBe(callsBefore + 1)
   })
+
+  it('Case 8: prices AMM liquidity from the requested network only', async () => {
+    mockCall.mockResolvedValue({ records: [] })
+    mockQuery.mockResolvedValue({
+      rows: [{ reserve_a: '10000', reserve_b: '4000', fee_bp: '30' }]
+    } as any)
+
+    await getBestRoute(assetA, assetB, pairKey, 1000, 'mainnet')
+
+    const [sql, params] = mockQuery.mock.calls[0]
+    // Both legs of the lookup: the pool_snapshots scan and the price_points
+    // subquery naming which pools hold this pair. Pool ids are only unique
+    // within a network, so an unfiltered scan prices a mainnet pair off a
+    // testnet pool's reserves.
+    expect(sql).toMatch(/ps\.network\s*=\s*\$2/)
+    expect(sql).toMatch(/pool_snapshots[\s\S]*WHERE pair_key = \$1 AND network = \$2 AND source = 'AMM'/)
+    expect(params).toEqual([pairKey, 'mainnet'])
+  })
 })
