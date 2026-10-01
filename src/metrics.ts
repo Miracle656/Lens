@@ -52,6 +52,18 @@ export const x402_payments_received_total = new Counter({
   registers: [register]
 })
 
+export const api_key_daily_quota_events_total = new Counter({
+  name: 'api_key_daily_quota_events_total',
+  help: 'API-key daily quota decisions by outcome',
+  // `outcome` is a closed set: "exceeded" (a request was refused because the
+  // key is over its ratePerDay) or "unavailable" (Redis was unreachable and the
+  // quota was waved through, fail-open — see src/api/dailyQuota.ts). The key id
+  // is deliberately NOT a label: it is unbounded, and one series per key would
+  // grow without limit.
+  labelNames: ['outcome'],
+  registers: [register]
+})
+
 export const last_trade_timestamp = new Gauge({
   name: 'last_trade_timestamp',
   help: 'Unix timestamp of the last trade ingested for a pair',

@@ -24,6 +24,7 @@ import { registerNetworkSelector } from './middleware/network'
 import { registerHttpMetrics } from './middleware/httpMetrics'
 import { registerWebSocket } from './api/websocket'
 import { registerApiKeyAuth } from './api/auth'
+import { registerDailyQuota } from './api/dailyQuota'
 import { registerAdminRoutes } from './api/admin'
 import { registerUsageRoutes } from './api/usage'
 import { registerFacilitatorRoutes } from './api/facilitator'
@@ -124,6 +125,15 @@ async function main() {
       retryAfter: context.after
     })
   })
+
+  // Per-key daily quota (ratePerDay). The per-minute limiter above is
+  // in-process: it does not survive a restart and it resets every minute, so on
+  // its own it never gave a key issued with `--per-day 100` anything less than
+  // ~86,400 requests a day. This counter is Redis-backed and keyed by the UTC
+  // day. Registered AFTER the minute limiter so the minute window is still
+  // evaluated first, exactly as before — the per-minute behaviour is unchanged.
+  // Fails open (loudly) if Redis is unreachable; see src/api/dailyQuota.ts.
+  await app.register(registerDailyQuota)
 
   // Specific limit for /status (higher for monitoring)
   app.addHook('onRoute', (routeOptions) => {
