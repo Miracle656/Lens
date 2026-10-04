@@ -92,9 +92,19 @@ describe('Price aggregator property tests', () => {
           expect(['SDEX', 'AMM', 'SPLIT', 'UNKNOWN']).toContain(result.route)
           expect(result.estimatedOutput).toBeGreaterThanOrEqual(0)
           expect(result.slippagePct).toBeGreaterThanOrEqual(0)
-          expect(result.slippagePct).toBeCloseTo(0, 6)
+          expect(Number.isFinite(result.slippagePct)).toBe(true)
+          if (ammPrice <= 0 || result.route !== 'AMM') {
+            // slippage is only measured against the AMM spot on an AMM route;
+            // SDEX/SPLIT (or no pool) have no size-independent reference
+            expect(result.slippagePct).toBe(0)
+          }
 
           if (sdexPrice === 0) {
+            // AMM-only: slippage is exactly the curve's gap to reserve-ratio spot
+            const reserveA = 10000
+            const reserveB = (ammPrice * (reserveA + amount * fee)) / fee
+            const spot = reserveB / reserveA
+            expect(result.slippagePct).toBeCloseTo(Math.max(0, ((spot - ammPrice) / spot) * 100), 4)
             expect(result.route).toBe('AMM')
             expect(result.estimatedOutput).toBeCloseTo(ammPrice * amount, 6)
           }
