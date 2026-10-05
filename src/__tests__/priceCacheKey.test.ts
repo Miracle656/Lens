@@ -11,21 +11,33 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Fastify from 'fastify'
 
-const { fakeRedis, redisCtor } = vi.hoisted(() => {
-  const store = new Map<string, string>()
-  const fakeRedis = {
-    store,
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => {
-      store.set(key, value)
-      return 'OK'
-    }),
-    on: vi.fn(),
-  }
-  return { fakeRedis, redisCtor: vi.fn(() => fakeRedis) }
-})
+const redisSpy = vi.hoisted(() => ({
+  store: new Map<string, string>(),
+  setCalls: [] as unknown[][],
+  getCalls: [] as string[],
+}))
 
-vi.mock('ioredis', () => ({ default: redisCtor }))
+// `src/redis.ts` constructs its client at import time (`new Redis(url, opts)`),
+// so the mock has to be a real *constructor* — `vi.fn(() => fake)` is not one
+// and throws "is not a constructor" under `new`. A class also keeps set/get
+// flowing through the real helpers in src/redis.ts, which is the point of this
+// file.
+vi.mock('ioredis', () => ({
+  default: class MockRedis {
+    async get(key: string) {
+      redisSpy.getCalls.push(key)
+      return redisSpy.store.get(key) ?? null
+    }
+    async set(key: string, value: string, ...rest: unknown[]) {
+      redisSpy.setCalls.push([key, value, ...rest])
+      redisSpy.store.set(key, value)
+      return 'OK'
+    }
+    on() {
+      return this
+    }
+  },
+}))
 
 vi.mock('../db', () => ({
   pgPool: { query: vi.fn() },
@@ -107,18 +119,20 @@ async function buildApp() {
 describe('price cache key ownership (#166)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    fakeRedis.store.clear()
+    redisSpy.store.clear()
+    redisSpy.setCalls.length = 0
+    redisSpy.getCalls.length = 0
   })
 
   it('builds the identical key for the worker write and the /price read', async () => {
     // The refresh worker's write path (see jobs/aggregateRefresh.ts).
     await setCachedPrice('testnet', 'USDC/XLM', PAYLOAD, 10)
-    expect(fakeRedis.set).toHaveBeenCalledWith(
+    expect(redisSpy.setCalls[0]).toEqual([
       'lens:testnet:price:USDC/XLM',
       JSON.stringify(PAYLOAD),
       'EX',
       10,
-    )
+    ])
 
     // The /price handler's read path — the real helper runs here, so this is the
     // key the route would use against a live Redis.
@@ -126,7 +140,7 @@ describe('price cache key ownership (#166)', () => {
     const res = await app.inject({ method: 'GET', url: '/price/XLM/USDC' })
 
     expect(res.statusCode).toBe(200)
-    expect(fakeRedis.get).toHaveBeenCalledWith('lens:testnet:price:USDC/XLM')
+    expect(redisSpy.getCalls).toContain('lens:testnet:price:USDC/XLM')
   })
 
   it('serves a worker-written entry with X-Cache: HIT', async () => {
