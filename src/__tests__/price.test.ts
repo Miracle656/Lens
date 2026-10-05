@@ -24,7 +24,7 @@ vi.mock('../aggregator/bestRoute', () => ({
 const { testnetPairs, mainnetPairs } = vi.hoisted(() => ({
   testnetPairs: [
     {
-      pairKey: 'USDC/XLM,
+      pairKey: 'USDC/XLM',
       assetA: { code: 'XLM', issuer: null },
       assetB: { code: 'USDC', issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' },
     },
@@ -78,7 +78,7 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('AVG(spot_price::numeric)')) return { rows: [{ amm_price: '0.1' }] }
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: recent }] }
-      if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }, { source: 'AMM$, vol: '50' }] }
+      if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }, { source: 'AMM', vol: '50' }] }
       if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '2' }] }
       if (sql.includes('SUM(price::numeric * base_volume::numeric)')) return { rows: [{ vwap: '0.1' }] }
       if (sql.includes('price_24h_ago')) return { rows: [{ price_24h_ago: '0.09', price_now: '0.1' }] }
@@ -124,7 +124,6 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
 
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes('MAX(timestamp) as last_trade')) return { rows: [{ last_trade: tenMinAgo }] }
-      if (sql.includes('COUNT(MAX(timestamp) as last_trade')) return { rows: [{ last_trade: tenMinAgo }] }
       if (sql.includes('GROUP BY source')) return { rows: [{ source: 'SDEX', vol: '100' }] }
       if (sql.includes('COUNT(DISTINCT COALESCE(pool_id')) return { rows: [{ sources: '1' }] }
       if (sql.includes('SUM(price::numeric * base_volume::numeric)')) return { rows: [{ vwap: '0.1' }] }
@@ -162,7 +161,15 @@ describe('GET /price/:assetA/:assetB confidence score', () => {
     })
 
     const app = await buildApp()
-    await app.inject(server: undefined as any, { method: 'GET', url: '/price/XLM/USDC' })
+    const res = await app.inject({ method: 'GET', url: '/price/XLM/USDC' })
+
+    expect(res.statusCode).toBe(200)
+    // The helper owns the key shape, so the route hands it (network, pairKey)
+    // in that order and never assembles `network:pairKey` itself. The real
+    // key-building is pinned in priceCacheKey.test.ts, where the redis module
+    // is not mocked out.
+    expect(mockGetCachedPrice).toHaveBeenCalledWith('testnet', 'USDC/XLM')
+    expect(mockSetCachedPrice).toHaveBeenCalledWith('testnet', 'USDC/XLM', expect.any(Object), 10)
   })
 })
 
@@ -303,7 +310,7 @@ describe('GET /price/:assetA/:assetB network scoping', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-cache']).toBe('HIT')
-    expect(mockGetCachedPrice).toHaveBeenCalledWith('mainnet:USDC/XLM')
+    expect(mockGetCachedPrice).toHaveBeenCalledWith('mainnet', 'USDC/XLM')
     expect(res.json().network).toBe('mainnet')
     // Nothing was re-read from the database on a hit.
     expect(mockQuery).not.toHaveBeenCalled()

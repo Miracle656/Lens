@@ -1,5 +1,5 @@
 import Redis from 'ioredis'
-import { config, activeNetwork, type NetworkName } from './config'
+import { config, type NetworkName } from './config'
 
 export const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
@@ -13,11 +13,11 @@ export const redis = new Redis(config.redis.url, {
   // falling through to Postgres.
   //
   // It stayed hidden while REQUIRE_API_KEY was on, because the auth hook
-  // rejected requests before any handler could reach Redis. Opening the API
-  // up turned a 401 into a hang, which looked like the key change had failed.
+  // rejected requests before any handler could reach Redis. Opening the API up
+  // turned a 401 into a hang, which looked like the key change had failed.
   //
-  // Rejecting fast is what the callers already expect: reads fall back to
-  // the database, writes are best-effort, and x402 metering fails closed.
+  // Rejecting fast is what the callers already expect: reads fall back to the
+  // database, writes are best-effort, and x402 metering fails closed.
   enableOfflineQueue: false,
   // ioredis retries about once a second forever by default. Against a host
   // that no longer resolves that is a DNS lookup and two log lines every
