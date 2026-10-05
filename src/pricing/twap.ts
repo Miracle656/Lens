@@ -24,55 +24,6 @@ export interface VWAPResult {
   filterMethod: string
 }
 
-/**
- * Reject outliers using the Interquartile Range (IQR) method.
- * Prices outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR] are considered outliers.
- * Returns the filtered array and count of rejected points.
- */
-function rejectOutliersIQR(prices: number[]): { filtered: number[]; rejected: number } {
-  if (prices.length < 4) return { filtered: prices, rejected: 0 }
-
-  const sorted = [...prices].sort((a, b) => a - b)
-  const n = sorted.length
-
-  // Q1 = median of lower half
-  const lowerHalf = sorted.slice(0, Math.floor(n / 2))
-  const upperHalf = sorted.slice(Math.ceil(n / 2))
-
-  const q1 = median(lowerHalf)
-  const q3 = median(upperHalf)
-  const iqr = q3 - q1
-
-  const lowerBound = q1 - 1.5 * iqr
-  const upperBound = q3 + 1.5 * iqr
-
-  const filtered = prices.filter(p => p >= lowerBound && p <= upperBound)
-  return { filtered, rejected: prices.length - filtered.length }
-}
-
-/**
- * Reject outliers using the Modified Z-Score method (more robust for small samples).
- * Points with |z_score| > 3.5 are rejected.
- */
-function rejectOutliersModifiedZScore(prices: number[]): { filtered: number[]; rejected: number } {
-  if (prices.length < 4) return { filtered: prices, rejected: 0 }
-
-  const sorted = [...prices].sort((a, b) => a - b)
-  const med = median(sorted)
-  const mad = median(sorted.map(v => Math.abs(v - med))) // Median Absolute Deviation
-
-  // If MAD is 0 (all same values), no outliers
-  if (mad === 0) return { filtered: prices, rejected: 0 }
-
-  const threshold = 3.5
-  const filtered = prices.filter(p => {
-    const zScore = 0.6745 * (p - med) / mad
-    return Math.abs(zScore) <= threshold
-  })
-
-  return { filtered, rejected: prices.length - filtered.length }
-}
-
 function median(arr: number[]): number {
   const sorted = [...arr].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
@@ -127,12 +78,27 @@ export async function computeTWAP(
   // Extract raw prices for outlier rejection
   const rawPrices = rows.map((r: any) => parseFloat(r.price))
 
-  // Reject outliers
-  const { filtered: validPrices, rejected } = outlierMethod === 'iqr'
-    ? rejectOutliersIQR(rawPrices)
-    : rejectOutliersModifiedZScore(rawPrices)
+  // Reject outliers by original index so timestamps and prices stay paired.
+  const { rejectedIndices: statisticalOutliers } = outlierMethod === 'iqr'
+    ? rejectOutliersWithIndices(rawPrices)
+    : rejectOutliersModifiedZScoreWithIndices(rawPrices)
+  const rejectedIndices = new Set(statisticalOutliers)
+  rawPrices.forEach((price, i) => {
+    if (!Number.isFinite(price)) rejectedIndices.add(i)
+  })
+  const rejected = rejectedIndices.size
 
-  if (validPrices.length === 0) {
+  const validPoints = rows
+    .map((r: any, i: number) => ({
+      ts: new Date(r.timestamp).getTime(),
+      price: rawPrices[i],
+      rejected: rejectedIndices.has(i),
+    }))
+    .filter((point: any) => !point.rejected)
+    .map(({ ts, price }: any) => ({ ts, price }))
+    .sort((a: any, b: any) => a.ts - b.ts)
+
+  if (validPoints.length === 0) {
     return {
       twap: 0,
       startTime: rows[0].timestamp,
@@ -151,7 +117,7 @@ export async function computeTWAP(
   if (totalDurationMs <= 0) {
     // Single data point — use its price
     return {
-      twap: validPrices[0],
+      twap: validPoints[0].price,
       startTime: rows[0].timestamp,
       endTime: rows[rows.length - 1].timestamp,
       sampleCount: rawPrices.length,
@@ -163,15 +129,6 @@ export async function computeTWAP(
   const sampleIntervalMs = sampleIntervalSeconds * 1000
   const sampleCount = Math.max(1, Math.floor(totalDurationMs / sampleIntervalMs))
   const interpolatedPrices: { price: number; weight: number }[] = []
-
-  // Build sorted (timestamp, price) pairs for the valid points
-  const validPoints = rows
-    .map((r: any, i: number) => ({
-      ts: new Date(r.timestamp).getTime(),
-      price: validPrices[i],
-    }))
-    .filter((_: any, i: number) => i < validPrices.length)
-    .sort((a: any, b: any) => a.ts - b.ts)
 
   for (let i = 0; i <= sampleCount; i++) {
     const sampleTs = startTime + i * sampleIntervalMs

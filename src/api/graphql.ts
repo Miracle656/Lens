@@ -5,7 +5,7 @@ import { getCachedPrice } from '../redis'
 import { getAggregatedPrice } from '../aggregator/vwap'
 import { getBestRoute } from '../aggregator/bestRoute'
 import { pgPool } from '../db'
-import { config } from '../config'
+import { config, activeNetwork } from '../config'
 import { priceEmitter, PRICE_PUBLISHED, type PricePublishedEvent } from '../events'
 
 // Mercurius pubsub topic that carries every new price. A single app-level
@@ -111,14 +111,21 @@ const resolvers = {
       if (!pair) return null
       const pairKey = pair.pairKey
 
-      // Try Redis cache first
-      const cached = await getCachedPrice(pairKey)
+      // These queries carry no network argument, so they resolve against the
+      // active network's pair list (findPair above) and read that same
+      // network's price data — scoped, not pooled across both chains.
+      // Per-request network selection on the GraphQL surface is separate work.
+      // The cache key is network-prefixed to match the REST route and the
+      // refresh worker, so no deployment can serve another network's cached
+      // payload under a network-less key.
+      const cacheKey = `${activeNetwork}:${pairKey}`
+      const cached = await getCachedPrice(cacheKey)
       if (cached) {
         try { return JSON.parse(cached) } catch { /* fall through */ }
       }
 
-      const agg = await getAggregatedPrice(pairKey)
-      const route = await getBestRoute(pair.assetA, pair.assetB, pairKey, 1000)
+      const agg = await getAggregatedPrice(pairKey, activeNetwork)
+      const route = await getBestRoute(pair.assetA, pair.assetB, pairKey, 1000, activeNetwork)
       return {
         assetA, assetB, pairKey, ...agg,
         bestRoute: route.route,

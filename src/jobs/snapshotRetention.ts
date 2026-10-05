@@ -1,6 +1,7 @@
 import { Queue, Worker } from 'bullmq'
 import { pgPool } from '../db'
-import { activeNetwork } from '../config'
+import { activeNetwork, type NetworkName } from '../config'
+import { getEnabledNetworks } from '../network/enabledNetworks'
 
 const QUEUE_NAME = `${activeNetwork}:snapshot-retention`
 
@@ -18,17 +19,44 @@ export function createSnapshotRetentionQueue() {
 }
 
 /**
- * Deletes price_snapshots rows older than the retention window. Returns the
- * number of rows pruned. Exported separately from the worker so it can be unit
- * tested and invoked manually.
+ * Deletes one network's price_snapshots rows older than the retention window.
+ * Returns the number of rows pruned. `network` defaults to the active network.
+ * Exported separately from the worker so it can be unit tested and invoked
+ * manually.
  */
-export async function pruneOldSnapshots(retentionDays: number = SNAPSHOT_RETENTION_DAYS): Promise<number> {
+export async function pruneOldSnapshots(
+  retentionDays: number = SNAPSHOT_RETENTION_DAYS,
+  network: NetworkName = activeNetwork
+): Promise<number> {
   const result = await pgPool.query(
     `DELETE FROM price_snapshots
      WHERE network = $1 AND ts < NOW() - ($2 || ' days')::interval`,
-    [activeNetwork, retentionDays]
+    [network, retentionDays]
   )
   return result.rowCount ?? 0
+}
+
+/**
+ * Prunes every network in `getEnabledNetworks()` and returns the pruned row
+ * count per network. A failure on one network does not stop the others from
+ * being pruned; the failures are rethrown together once all have been tried.
+ */
+export async function pruneAllNetworks(
+  retentionDays: number = SNAPSHOT_RETENTION_DAYS
+): Promise<Partial<Record<NetworkName, number>>> {
+  const counts: Partial<Record<NetworkName, number>> = {}
+  const errors: Error[] = []
+  for (const network of getEnabledNetworks()) {
+    try {
+      counts[network] = await pruneOldSnapshots(retentionDays, network)
+    } catch (err) {
+      errors.push(new Error(`${network}: ${(err as Error).message}`))
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, errors.map(e => e.message).join('; '))
+  }
+  return counts
 }
 
 export function startSnapshotRetentionWorker() {
@@ -36,8 +64,10 @@ export function startSnapshotRetentionWorker() {
     QUEUE_NAME,
     async () => {
       try {
-        const pruned = await pruneOldSnapshots()
-        if (pruned > 0) console.log(`[snapshot-retention] pruned ${pruned} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+        const counts = await pruneAllNetworks()
+        for (const [network, pruned] of Object.entries(counts)) {
+          if (pruned > 0) console.log(`[snapshot-retention] pruned ${pruned} ${network} snapshot(s) older than ${SNAPSHOT_RETENTION_DAYS}d`)
+        }
       } catch (err) {
         console.error('[snapshot-retention] prune failed:', (err as Error).message)
       }

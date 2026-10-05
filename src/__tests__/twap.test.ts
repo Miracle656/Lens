@@ -69,6 +69,56 @@ describe('TWAP Computation', () => {
     expect(result.twap).toBeGreaterThan(90)
   })
 
+  it('keeps timestamps aligned when rejecting an interior outlier', async () => {
+    const start = new Date('2026-01-01T00:00:00.000Z')
+    const oneMinMs = 60_000
+    mockQuery.mockResolvedValue({
+      rows: [
+        { price: '10', timestamp: new Date(start.getTime()) },
+        { price: '10', timestamp: new Date(start.getTime() + oneMinMs) },
+        { price: '10', timestamp: new Date(start.getTime() + 2 * oneMinMs) },
+        { price: '100', timestamp: new Date(start.getTime() + 3 * oneMinMs) },
+        { price: '20', timestamp: new Date(start.getTime() + 4 * oneMinMs) },
+        { price: '20', timestamp: new Date(start.getTime() + 5 * oneMinMs) },
+      ],
+    })
+
+    const result = await computeTWAP('XLM/USDC', 10, {
+      sampleIntervalSeconds: 60,
+      outlierMethod: 'iqr',
+    })
+
+    expect(result.outlierRejected).toBe(1)
+    expect(result.sampleCount).toBe(6)
+    // The rejected t+3m spike must not shift the t+4m price back to t+3m.
+    // Hand-computed TWAP over the five one-minute intervals:
+    // (10 + 10 + 10 + 10 + 20) / 5 = 12.
+    expect(result.twap).toBe(12)
+  })
+
+  it('rejects non-finite prices without corrupting TWAP', async () => {
+    const start = new Date('2026-01-01T00:00:00.000Z')
+    const oneMinMs = 60_000
+    mockQuery.mockResolvedValue({
+      rows: [
+        { price: '10', timestamp: new Date(start.getTime()) },
+        { price: '10', timestamp: new Date(start.getTime() + oneMinMs) },
+        { price: '10', timestamp: new Date(start.getTime() + 2 * oneMinMs) },
+        { price: 'not-a-number', timestamp: new Date(start.getTime() + 3 * oneMinMs) },
+        { price: '10', timestamp: new Date(start.getTime() + 4 * oneMinMs) },
+        { price: '10', timestamp: new Date(start.getTime() + 5 * oneMinMs) },
+      ],
+    })
+
+    const result = await computeTWAP('XLM/USDC', 10, {
+      sampleIntervalSeconds: 60,
+      outlierMethod: 'iqr',
+    })
+
+    expect(result.outlierRejected).toBe(1)
+    expect(result.twap).toBe(10)
+  })
+
   it('rejects multiple outliers with modified Z-score', async () => {
     const now = Date.now()
     const oneMinMs = 60_000
