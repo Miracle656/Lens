@@ -143,8 +143,10 @@ describe('aggregateRefresh runs once per enabled network', () => {
     for (const call of mockCalculateOHLCV.mock.calls) {
       expect(call).toContain('mainnet')
     }
+    // #166: redis.ts owns the key shape now, so the worker passes the pair key
+    // it read the row back with, not a pre-built key string.
     expect(mockSetCachedPrice).toHaveBeenCalledWith(
-      `mainnet:${mainnetPair.pairKey}`, expect.objectContaining({ network: 'mainnet' }), 10
+      'mainnet', mainnetPair.pairKey, expect.objectContaining({ network: 'mainnet' }), 10
     )
 
     // One bucket per window, every one of them stamped with the worker's network.
@@ -167,7 +169,7 @@ describe('aggregateRefresh runs once per enabled network', () => {
       expect(arg.create.network).toBe('testnet')
     }
     expect(mockSetCachedPrice).toHaveBeenCalledWith(
-      `testnet:${testnetPair.pairKey}`, expect.objectContaining({ network: 'testnet' }), 10
+      'testnet', testnetPair.pairKey, expect.objectContaining({ network: 'testnet' }), 10
     )
   })
 })

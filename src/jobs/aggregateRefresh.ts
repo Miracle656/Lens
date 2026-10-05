@@ -51,7 +51,7 @@ export function startAggregateWorker(network: NetworkName) {
         // Cache in Redis — network-scoped so the two chains' payloads for the
         // same pairKey never overwrite each other, and so it matches the key
         // /price/:a/:b reads.
-        await setCachedPrice(`${network}:${pairKey}`, result, config.cache.priceTtl)
+        await setCachedPrice(network, pairKey, result, config.cache.priceTtl)
 
         // Upsert aggregate buckets for each window
         const windows: Array<{ key: string; minutes: number }> = [

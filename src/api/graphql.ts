@@ -115,11 +115,9 @@ const resolvers = {
       // active network's pair list (findPair above) and read that same
       // network's price data — scoped, not pooled across both chains.
       // Per-request network selection on the GraphQL surface is separate work.
-      // The cache key is network-prefixed to match the REST route and the
-      // refresh worker, so no deployment can serve another network's cached
-      // payload under a network-less key.
-      const cacheKey = `${activeNetwork}:${pairKey}`
-      const cached = await getCachedPrice(cacheKey)
+      // The helper owns the network-prefixed key, so this read matches the REST
+      // route and the refresh worker instead of assembling its own.
+      const cached = await getCachedPrice(activeNetwork, pairKey)
       if (cached) {
         try { return JSON.parse(cached) } catch { /* fall through */ }
       }

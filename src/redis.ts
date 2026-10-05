@@ -1,5 +1,5 @@
 import Redis from 'ioredis'
-import { config, activeNetwork } from './config'
+import { config, type NetworkName } from './config'
 
 export const redis = new Redis(config.redis.url, {
   maxRetriesPerRequest: 3,
@@ -46,17 +46,32 @@ redis.on('error', (err) => {
   suppressedRedisErrors = 0
 })
 
-export async function getCachedPrice(pairKey: string): Promise<string | null> {
+/**
+ * Build the Redis key for a cached price.
+ *
+ * This is the one place that owns the key shape. The worker and the
+ * /price route both call the helpers below with the same (network, pairKey)
+ * pair, so the keys they produce are identical. Previously the route passed
+ * `${network}:${pair}` as the "pairKey" and this function added the process
+ * network again, so the worker wrote `lens:testnet:price:XLM/USDC` while
+ * the route read `lens:testnet:price:testnet:XLM/USDC` — the warm-cache path
+ * was dead.
+ */
+export function priceCacheKey(network: NetworkName, pairKey: string): string {
+  return `lens:${network}:price:${pairKey}`
+}
+
+export async function getCachedPrice(network: NetworkName, pairKey: string): Promise<string | null> {
   try {
-    return await redis.get(`lens:${activeNetwork}:price:${pairKey}`)
+    return await redis.get(priceCacheKey(network, pairKey))
   } catch {
     return null
   }
 }
 
-export async function setCachedPrice(pairKey: string, data: object, ttlSeconds: number): Promise<void> {
+export async function setCachedPrice(network: NetworkName, pairKey: string, data: object, ttlSeconds: number): Promise<void> {
   try {
-    await redis.set(`lens:${activeNetwork}:price:${pairKey}`, JSON.stringify(data), 'EX', ttlSeconds)
+    await redis.set(priceCacheKey(network, pairKey), JSON.stringify(data), 'EX', ttlSeconds)
   } catch {
     // Redis cache miss is non-fatal
   }
