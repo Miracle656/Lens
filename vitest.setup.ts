@@ -1,24 +1,33 @@
 /**
- * Isolate process.env across tests.
+ * Enforce process.env isolation across the suite.
  *
- * Several suites mutate env vars (ADMIN_API_KEY, ADMIN_TOKEN, STELLAR_NETWORK,
- * WATCHED_PAIRS_*, REQUIRE_API_KEY, …). Vitest reuses worker processes across
- * files, and with `--pool=threads` files can even share one process concurrently.
- * Without a restore, one file's leftovers become another file's flake.
+ * Root cause of intermittent auth.test.ts / pairs.test.ts (and rotating
+ * victims like networkVenueConfig.test.ts) failures: Vitest 4's default pool
+ * is already `forks`, so files do not run concurrently in one process. What
+ * leaks instead is `process.env` *within* a fork - a reused child process runs
+ * several files sequentially, so a key one file sets is still set when the
+ * next file starts, and any suite that assumes a clean environment fails
+ * depending on the order the files happen to be scheduled in.
  *
- * Snapshot once per worker at load time; reset after every test. Suites that
- * need a sticky env for the whole file should set it in beforeEach (not only
- * beforeAll).
+ * This setup file snapshots `process.env` before every test and restores it
+ * afterwards so mutations cannot leak to the next test in the same worker.
+ * Combined with `pool: 'forks'` in vitest.config.ts (separate process per
+ * concurrent file), cross-file leakage is eliminated without giving up
+ * file parallelism.
  */
-import { afterEach } from 'vitest'
+import { beforeEach, afterEach } from 'vitest'
 
-const ENV_SNAPSHOT: Record<string, string | undefined> = { ...process.env }
+let envSnapshot: Record<string, string | undefined>
+
+beforeEach(() => {
+  envSnapshot = { ...process.env }
+})
 
 afterEach(() => {
   for (const key of Object.keys(process.env)) {
-    if (!(key in ENV_SNAPSHOT)) delete process.env[key]
+    if (!(key in envSnapshot)) delete process.env[key]
   }
-  for (const [key, value] of Object.entries(ENV_SNAPSHOT)) {
+  for (const [key, value] of Object.entries(envSnapshot)) {
     if (value === undefined) delete process.env[key]
     else process.env[key] = value
   }

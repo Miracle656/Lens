@@ -19,16 +19,20 @@ import type { FastifyInstance, FastifySchema } from 'fastify'
 /** GET /status */
 export const statusResponseSchema = {
   type: 'object',
-  required: ['ok', 'watchedPairs', 'lastIndexedLedger', 'lastProcessedAt'],
+  required: ['ok', 'network', 'watchedPairs', 'lastIndexedLedger', 'lastProcessedAt', 'ingestLagSeconds'],
   additionalProperties: false,
   properties: {
     ok: { type: 'boolean' },
+    network: { type: 'string', enum: ['testnet', 'mainnet'] },
     watchedPairs: { type: 'array', items: { type: 'string' } },
     lastIndexedLedger: { type: ['integer', 'null'] },
     // The pg driver returns a timestamp column as a JS Date; the validating
     // serializer sees that pre-serialization object, so accept Date | string |
     // null here (a Date stringifies to an ISO string in the response body).
     lastProcessedAt: {},
+    // Seconds since the last ingester write for this network, null before the
+    // first one. Lets `/status` reveal a stalled ingester on its own.
+    ingestLagSeconds: { type: ['integer', 'null'] },
   },
 } as const
 

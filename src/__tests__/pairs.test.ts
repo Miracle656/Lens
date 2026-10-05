@@ -36,24 +36,20 @@ vi.mock('../pairsRegistry', () => ({
 }))
 
 import { registerPairsRoutes } from '../routes/pairs'
+import { activeNetwork } from '../config'
 
 const ADMIN_KEY = 'test-admin-key-abc'
 const VALID_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 
 async function buildApp() {
-  // routes/pairs.ts reads ADMIN_API_KEY at *request* time, not registration
-  // time. Do not restore/delete the key here — that raced with parallel suites
-  // and produced intermittent 401s on the 201 happy-path test.
+  // Keep ADMIN_API_KEY set through inject — the route reads it at request time.
+  // Restoring here (before inject) raced with parallel files mutating process.env.
   process.env.ADMIN_API_KEY = ADMIN_KEY
   const app = Fastify({ logger: false })
   await registerPairsRoutes(app)
   await app.ready()
   return app
 }
-
-afterEach(() => {
-  delete process.env.ADMIN_API_KEY
-})
 
 beforeEach(() => {
   process.env.ADMIN_API_KEY = ADMIN_KEY
@@ -62,6 +58,10 @@ beforeEach(() => {
   mockPersistPair.mockReset().mockResolvedValue(undefined)
   mockGetActivePairs.mockReset().mockReturnValue([])
   mockQuery.mockReset().mockResolvedValue({ rows: [] })
+})
+
+afterEach(() => {
+  delete process.env.ADMIN_API_KEY
 })
 
 describe('POST /pairs', () => {
@@ -179,5 +179,51 @@ describe('GET /pairs', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().pairs).toHaveLength(1)
     expect(res.json().pairs[0].pairKey).toBe('USDC/XLM')
+  })
+
+  describe('query shape', () => {
+    const pair = (pairKey: string) => ({
+      pairKey,
+      assetA: { code: 'XLM', issuer: null },
+      assetB: { code: 'USDC', issuer: VALID_ISSUER },
+    })
+
+    it('probes per watched pair, scoped to the network, instead of scanning history', async () => {
+      mockGetActivePairs.mockReturnValue([pair('A/B'), pair('C/D')])
+      const app = await buildApp()
+      await app.inject({ method: 'GET', url: '/pairs' })
+
+      const [sql, params] = mockQuery.mock.calls[0]
+      expect(sql).not.toMatch(/DISTINCT ON/i)
+      expect(sql).toMatch(/network = \$1/)
+      expect(sql).toMatch(/LATERAL/i)
+      expect(sql).toMatch(/LIMIT 1/i)
+      expect(params).toEqual([activeNetwork, ['A/B', 'C/D']])
+    })
+
+    it('uses the request network when one is resolved', async () => {
+      mockGetActivePairs.mockReturnValue([pair('A/B')])
+      const app2 = Fastify({ logger: false })
+      app2.decorateRequest('network', undefined as any)
+      app2.addHook('onRequest', async (req) => {
+        req.network = 'mainnet'
+      })
+      await registerPairsRoutes(app2)
+      await app2.ready()
+      await app2.inject({ method: 'GET', url: '/pairs' })
+      expect(mockQuery.mock.calls[0][1][0]).toBe('mainnet')
+    })
+
+    it('keeps a quiet pair with its real timestamp and reports an unseen pair as null', async () => {
+      mockGetActivePairs.mockReturnValue([pair('QUIET/X'), pair('NEW/Y')])
+      const old = new Date('2020-01-01T00:00:00Z')
+      mockQuery.mockResolvedValue({ rows: [{ pair_key: 'QUIET/X', price: '1.5', timestamp: old }] })
+      const app = await buildApp()
+      const body = (await app.inject({ method: 'GET', url: '/pairs' })).json()
+
+      expect(body.pairs).toHaveLength(2)
+      expect(body.pairs[0]).toMatchObject({ pairKey: 'QUIET/X', latestPrice: 1.5, lastUpdated: old.toISOString() })
+      expect(body.pairs[1]).toMatchObject({ pairKey: 'NEW/Y', latestPrice: null, lastUpdated: null })
+    })
   })
 })

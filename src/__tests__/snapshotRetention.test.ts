@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }))
 
@@ -14,7 +14,7 @@ vi.mock('bullmq', () => ({
   Worker: class {},
 }))
 
-import { pruneOldSnapshots, SNAPSHOT_RETENTION_DAYS } from '../jobs/snapshotRetention'
+import { pruneOldSnapshots, pruneAllNetworks, SNAPSHOT_RETENTION_DAYS } from '../jobs/snapshotRetention'
 import { activeNetwork } from '../config'
 
 describe('pruneOldSnapshots', () => {
@@ -47,5 +47,77 @@ describe('pruneOldSnapshots', () => {
     mockQuery.mockResolvedValue({ rowCount: null })
 
     expect(await pruneOldSnapshots()).toBe(0)
+  })
+})
+
+describe('pruneOldSnapshots network argument', () => {
+  beforeEach(() => {
+    mockQuery.mockReset()
+  })
+
+  it('binds the requested network instead of the active one', async () => {
+    mockQuery.mockResolvedValue({ rowCount: 2 })
+
+    await pruneOldSnapshots(30, 'mainnet')
+    await pruneOldSnapshots(30, 'testnet')
+
+    expect(mockQuery.mock.calls[0][1]).toEqual(['mainnet', 30])
+    expect(mockQuery.mock.calls[1][1]).toEqual(['testnet', 30])
+  })
+})
+
+describe('pruneAllNetworks', () => {
+  const saved = process.env.ENABLED_NETWORKS
+
+  beforeEach(() => {
+    mockQuery.mockReset()
+  })
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.ENABLED_NETWORKS
+    else process.env.ENABLED_NETWORKS = saved
+  })
+
+  // Fake table keyed by network, so the test fails if any network is skipped.
+  function fakeTable(rows: Record<string, number>) {
+    mockQuery.mockImplementation(async (_sql: string, params: unknown[]) => {
+      const network = params[0] as string
+      const count = rows[network] ?? 0
+      rows[network] = 0
+      return { rowCount: count }
+    })
+    return rows
+  }
+
+  it('prunes both networks on a dual-network process and reports per-network counts', async () => {
+    process.env.ENABLED_NETWORKS = 'testnet,mainnet'
+    const rows = fakeTable({ testnet: 4, mainnet: 9 })
+
+    const counts = await pruneAllNetworks()
+
+    expect(counts).toEqual({ testnet: 4, mainnet: 9 })
+    expect(rows).toEqual({ testnet: 0, mainnet: 0 })
+    expect(mockQuery.mock.calls.map(c => c[1][0])).toEqual(['testnet', 'mainnet'])
+  })
+
+  it('prunes only the active network when ENABLED_NETWORKS is unset', async () => {
+    delete process.env.ENABLED_NETWORKS
+    fakeTable({ testnet: 1, mainnet: 1 })
+
+    const counts = await pruneAllNetworks()
+
+    expect(Object.keys(counts)).toEqual([activeNetwork])
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+  })
+
+  it('still prunes the other network when one fails, then reports the failure', async () => {
+    process.env.ENABLED_NETWORKS = 'testnet,mainnet'
+    mockQuery.mockImplementation(async (_sql: string, params: unknown[]) => {
+      if (params[0] === 'testnet') throw new Error('boom')
+      return { rowCount: 3 }
+    })
+
+    await expect(pruneAllNetworks()).rejects.toThrow(/testnet: boom/)
+    expect(mockQuery.mock.calls.map(c => c[1][0])).toEqual(['testnet', 'mainnet'])
   })
 })
