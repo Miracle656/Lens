@@ -64,7 +64,7 @@ export async function appendSnapshots(
   )
 
   const inserted = result.rowCount ?? 0
-  if (inserted > 0) price_snapshots_total.inc(inserted)
+  if (inserted > 0) price_snapshots_total.inc({ network }, inserted)
   return inserted
 }
 

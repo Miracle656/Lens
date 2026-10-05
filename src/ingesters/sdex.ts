@@ -3,13 +3,22 @@ import { trades_ingested_total, last_trade_timestamp } from '../metrics'
 import { config, activeNetwork, type NetworkName } from '../config'
 import { getHorizonServer } from '../network/clients'
 import { getActivePairs } from '../pairsRegistry'
-import { upsertPricePoints, getIndexerCursor, setIndexerCursor } from '../db'
+import { upsertPricePoints, getIndexerState, setIndexerCursor } from '../db'
+import { resolvePageLedgers } from './toid'
 import { dispatchPriceUpdate } from '../webhookDispatcher'
 import { publishPriceUpdate } from '../events'
 import type { WatchedPair } from '../types'
 
-// Last seen price per pairKey — used for threshold crossing detection
+// Last seen price per (network, pairKey) — used for threshold crossing detection
 const lastPrice = new Map<string, number>()
+
+export function _resetLastPrice(): void {
+  lastPrice.clear()
+}
+
+export function _getLastPrice(network: NetworkName, pairKey: string): number | undefined {
+  return lastPrice.get(`${network}:${pairKey}`)
+}
 
 function toAsset(asset: { code: string; issuer: string | null }): Asset {
   if (!asset.issuer || asset.code === 'XLM') return Asset.native()
@@ -18,7 +27,8 @@ function toAsset(asset: { code: string; issuer: string | null }): Asset {
 
 export async function ingestPair(pair: WatchedPair, network: NetworkName = activeNetwork): Promise<void> {
   const stateId = `sdex:${network}:${pair.pairKey}`
-  const cursor = await getIndexerCursor(stateId, network) ?? '0'
+  const state = await getIndexerState(stateId, network)
+  const cursor = state.cursor ?? '0'
 
   try {
     const assetA = toAsset(pair.assetA)
@@ -32,9 +42,20 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
       .order('asc')
       .call()
 
-    if (!trades.records.length) return
+    const records = trades.records
+    if (!records.length) return
 
-    const points = trades.records.map((t: any) => {
+    // Horizon returns no `ledger` on a trade; it lives in the TOID prefix.
+    const ledgers = resolvePageLedgers(
+      records.map((t: any) => t.paging_token ?? t.id),
+      state.ledger,
+    )
+    if (ledgers === null) {
+      console.error(`[sdex] ${pair.pairKey}: no ledger derivable from ${records.length} trades; skipping batch`)
+      return
+    }
+
+    const points = records.map((t: any, i: number) => {
       const baseCode = t.base_asset_type === 'native' ? 'XLM' : t.base_asset_code
       const isForward = baseCode === pair.assetA.code
 
@@ -50,25 +71,28 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
         price,
         baseVolume: parseFloat(t.base_amount),
         counterVolume: parseFloat(t.counter_amount),
-        ledger: 0,
+        ledger: ledgers[i],
         timestamp: new Date(t.ledger_close_time),
         eventId: t.id,
       }
     })
 
     if (points.length > 0) {
-      const previousPrice = lastPrice.get(pair.pairKey) ?? points[0].price
+      const trackerKey = `${network}:${pair.pairKey}`
+      const previousPrice = lastPrice.get(trackerKey) ?? points[0].price
       const currentPrice = points[points.length - 1].price
 
       await upsertPricePoints(points, network)
-      lastPrice.set(pair.pairKey, currentPrice)
+      lastPrice.set(trackerKey, currentPrice)
 
-      // Metrics instrumentation
-      trades_ingested_total.inc({ pair: pair.pairKey }, points.length)
-      last_trade_timestamp.set({ pair: pair.pairKey }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
+      // Metrics instrumentation. `network` is the loop's own network, not
+      // `activeNetwork` — one ingester set runs per enabled network and they
+      // all share this registry.
+      trades_ingested_total.inc({ pair: pair.pairKey, network }, points.length)
+      last_trade_timestamp.set({ pair: pair.pairKey, network }, Math.floor(points[points.length - 1].timestamp.getTime() / 1000))
 
-      const lastCursor = trades.records[trades.records.length - 1].paging_token
-      await setIndexerCursor(stateId, lastCursor, network)
+      const lastRecord = records[records.length - 1]
+      await setIndexerCursor(stateId, lastRecord.paging_token, network, ledgers[ledgers.length - 1])
       console.log(`[sdex] ${pair.pairKey}: ingested ${points.length} trades`)
 
       publishPriceUpdate({
@@ -83,6 +107,7 @@ export async function ingestPair(pair: WatchedPair, network: NetworkName = activ
         assetB: pair.assetB.code,
         previousPrice,
         currentPrice,
+        network,
       }).catch(err => console.error('[sdex] webhook dispatch error:', err.message))
     }
   } catch (err) {

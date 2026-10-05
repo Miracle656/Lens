@@ -19,7 +19,7 @@
     "key:issue": "tsx scripts/issue-api-key.ts",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
-    "preinstall": "node dist/setup.js"
+    "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "@fastify/compress": "^8.3.1",
