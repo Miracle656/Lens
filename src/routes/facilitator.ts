@@ -4,6 +4,15 @@ import { rpc } from '@stellar/stellar-sdk'
 import { prisma } from '../db'
 import { getNetworkConfig, type NetworkName } from '../config'
 import { CAIP2_BY_NETWORK, getFacilitator, type SettleResponseShape } from '../x402/facilitator'
+import {
+  assertCallerAllowed,
+  assertFeeWithinCap,
+  FACILITATOR_DECLINED,
+  reconcileDailySpend,
+  releaseDailySpend,
+  reserveDailySpend,
+  type GuardRefusal,
+} from '../x402/settleGuards'
 
 /**
  * `POST /settle` — the facilitator endpoint that actually submits a payment.
@@ -28,7 +37,19 @@ export const SETTLE_ERROR_REASONS = {
   malformed: 'invalid_exact_stellar_payload_malformed',
   transactionFailed: 'settle_exact_stellar_transaction_failed',
   unexpected: 'unexpected_settle_error',
+  /** Spec-shaped decline when a hardening control refuses to settle (#147). */
+  declined: FACILITATOR_DECLINED,
 } as const
+
+/** Tighter than the global unauthenticated IP default (100/min). */
+function settleRateLimitMax(): number {
+  const parsed = parseInt(process.env.FACILITATOR_SETTLE_RATE_MAX ?? '20', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 20
+}
+
+function declineFromGuard(txHash: string, caip2: string, refusal: GuardRefusal): SettleResponseShape {
+  return settleFailure(txHash, caip2, SETTLE_ERROR_REASONS.declined, refusal.errorMessage)
+}
 
 type AttemptState = 'submitting' | 'settled' | 'failed'
 
@@ -144,7 +165,20 @@ function isUniqueViolation(err: unknown): boolean {
  * payment to accept one.
  */
 export async function registerSettleRoute(app: FastifyInstance) {
-  app.post('/settle', { config: { public: true } }, async (req: FastifyRequest, reply: FastifyReply) => {
+  app.post(
+    '/settle',
+    {
+      config: {
+        public: true,
+        // Bound frequency separately from the spend ceiling — rate limits are
+        // not a substitute for a balance cap (#147).
+        rateLimit: {
+          max: settleRateLimitMax(),
+          timeWindow: '1 minute',
+        },
+      },
+    },
+    async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as SettleRequestBody
 
     const caip2 = typeof body.paymentRequirements?.network === 'string' ? body.paymentRequirements.network : ''
@@ -174,6 +208,26 @@ export async function registerSettleRoute(app: FastifyInstance) {
           settleFailure('', caip2, SETTLE_ERROR_REASONS.malformed, 'paymentPayload.payload.transaction is not a transaction envelope.'),
         )
     }
+
+    // ── Hardening (#147): allow-list + per-settlement fee cap BEFORE submit ──
+    const callerBlock = assertCallerAllowed(req)
+    if (callerBlock) {
+      req.log.warn(
+        { network, txHash, reason: callerBlock.reason, caller: req.headers.origin ?? req.headers['x-facilitator-caller'] },
+        '[facilitator] settle refused by caller allow-list',
+      )
+      return reply.code(403).send(declineFromGuard(txHash, caip2, callerBlock))
+    }
+
+    const feeCheck = assertFeeWithinCap(transactionXdr, network)
+    if (!feeCheck.ok) {
+      req.log.warn(
+        { network, txHash, reason: feeCheck.reason, feeStroops: feeCheck.feeStroops },
+        '[facilitator] settle refused by per-settlement fee cap',
+      )
+      return reply.code(403).send(declineFromGuard(txHash, caip2, feeCheck))
+    }
+    const feeStroops = feeCheck.feeStroops
 
     const facilitator = getFacilitator(network)
     if (!facilitator) {
@@ -213,7 +267,7 @@ export async function registerSettleRoute(app: FastifyInstance) {
       })
 
       // A payload is consumed the moment its record exists. A second settle
-      // replays the stored answer rather than paying twice.
+      // replays the stored answer rather than paying twice — no second fee spend.
       if (existing?.state === 'settled' || existing?.state === 'failed') {
         return (existing.response as unknown as SettleResponseShape) ?? settleFailure(
           txHash,
@@ -223,7 +277,52 @@ export async function registerSettleRoute(app: FastifyInstance) {
         )
       }
 
-      return resolveFromLedger(existing!.id, txHash, network, caip2)
+      if (!existing) {
+        // The row was withdrawn between the unique-constraint rejection and this
+        // read: a concurrent attempt was refused by a guard before submitting
+        // and cleaned its row up. Nothing reached the ledger, so the honest
+        // answer is "retry" rather than throwing on a non-null assertion.
+        return settleFailure(
+          txHash,
+          caip2,
+          SETTLE_ERROR_REASONS.unexpected,
+          'A concurrent attempt for this payload was withdrawn before submission; please retry.',
+        )
+      }
+
+      return resolveFromLedger(existing.id, txHash, network, caip2)
+    }
+
+    // Daily ceiling — only for new attempts. Fail closed on store outage.
+    //
+    // Book the *worst case* the scheme can sponsor, not `feeStroops`. The
+    // envelope's `fee` is caller-supplied and the scheme discards it, rebuilding
+    // the transaction on the facilitator's own account and paying
+    // `minResourceFee + BASE_FEE` (bounded by `facilitator.feeStroops`, i.e.
+    // `maxTransactionFeeStroops`). Booking the declared fee would let a caller
+    // set `fee: 100` and consume ~1/500th of its real exposure from the ledger.
+    // The reservation is reconciled down to `feeCharged` after a successful
+    // settle, and released in full if settlement aborts before submission.
+    const ceiling = getNetworkConfig(network).facilitator.dailySpendCeilingStroops
+    const reservedStroops = getNetworkConfig(network).facilitator.feeStroops
+    const reserved = await reserveDailySpend(network, reservedStroops, ceiling)
+    if (!reserved.ok) {
+      req.log.warn(
+        { network, txHash, reason: reserved.reason, feeStroops, reservedStroops, ceiling },
+        '[facilitator] settle refused by daily spend ceiling',
+      )
+      const response = declineFromGuard(txHash, caip2, reserved)
+      // Withdraw the pre-submission row instead of finalising it as a terminal
+      // `failed`. A daily-cap refusal is a routine, self-healing condition — it
+      // clears at the next UTC midnight — but the idempotency path above replays
+      // a stored `failed` as the payload's final answer, so finalising here
+      // would brick the payer's payload permanently and hand back this 403 for
+      // every later attempt. Nothing was submitted (the reservation is taken
+      // before `facilitator.settle`), so dropping the row — and the implicit
+      // "payload consumed" lock that comes with it — makes the payload
+      // retryable rather than poisoning it.
+      await prisma.settlementAttempt.delete({ where: { id: attemptId } }).catch(() => undefined)
+      return reply.code(403).send(response)
     }
 
     try {
@@ -235,12 +334,21 @@ export async function registerSettleRoute(app: FastifyInstance) {
         ...(response.success ? {} : { errorReason: response.errorReason ?? SETTLE_ERROR_REASONS.unexpected }),
       }
 
+      // Release the unused headroom down to what the ledger actually charged.
+      if (normalised.success) {
+        await reconcileDailySpend(network, reservedStroops, normalised.transaction)
+      }
+
       await finalise(attemptId, normalised.success ? 'settled' : 'failed', normalised)
       return normalised
     } catch (err) {
+      // Submission never landed — release the daily reservation so a later
+      // legitimate settle is not charged for an aborted attempt.
+      await releaseDailySpend(network, reservedStroops)
       const response = settleFailure(txHash, caip2, SETTLE_ERROR_REASONS.unexpected, (err as Error).message)
       await finalise(attemptId, 'failed', response)
       return response
     }
-  })
+  },
+  )
 }
