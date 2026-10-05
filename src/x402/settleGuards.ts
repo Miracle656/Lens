@@ -1,5 +1,5 @@
 import type { FastifyRequest } from 'fastify'
-import { TransactionBuilder } from '@stellar/stellar-sdk'
+import { rpc, TransactionBuilder } from '@stellar/stellar-sdk'
 import { getNetworkConfig, type NetworkName } from '../config'
 import { redis } from '../redis'
 
@@ -80,8 +80,14 @@ export function assertCallerAllowed(req: FastifyRequest): GuardRefusal | null {
 }
 
 /**
- * Reads the fee (stroops) the envelope declares — the amount the facilitator
- * will sponsor when `areFeesSponsored` is on.
+ * Reads the fee (stroops) the envelope declares. This is **not** the amount the
+ * facilitator sponsors: `ExactStellarScheme.settle()` discards the envelope and
+ * rebuilds the transaction on the facilitator's own account, paying
+ * `minResourceFee + BASE_FEE` from its own simulation. The declared fee is
+ * caller-supplied and never reaches a ledger, so it must not be used to account
+ * for spend (see {@link reserveDailySpend}). It is still worth reading here
+ * because a payload declaring a fee above the per-settlement cap is malformed
+ * and can be refused cheaply, before the scheme simulates it.
  */
 export function extractFeeStroops(transactionXdr: string, network: NetworkName): number | null {
   try {
@@ -98,6 +104,12 @@ export function extractFeeStroops(transactionXdr: string, network: NetworkName):
  * Per-settlement fee ceiling — rejects before any ledger submission or daily
  * reservation. Independent of the rate limiter (which bounds frequency, not
  * balance).
+ *
+ * This compares the *caller-declared* envelope fee, which the scheme discards;
+ * the authoritative per-settlement bound is `maxTransactionFeeStroops`, which
+ * `ExactStellarScheme.verify()` enforces against its own simulation. The check
+ * here is therefore only a cheap malformed-payload guard, not the spend control
+ * — the daily ledger books the worst case instead (see {@link reserveDailySpend}).
  */
 export function assertFeeWithinCap(transactionXdr: string, network: NetworkName): FeeOk | GuardRefusal {
   const feeStroops = extractFeeStroops(transactionXdr, network)
@@ -131,31 +143,48 @@ export function dailySpendKey(network: NetworkName, day = utcDayKey()): string {
 }
 
 /**
- * Atomically reserves `feeStroops` against the network's rolling daily
+ * Atomically reserves `amountStroops` against the network's rolling daily
  * ceiling. Increments first, then rolls back if the new total exceeds the
  * ceiling — so concurrent settles cannot race past the cap.
+ *
+ * `amountStroops` must be the *worst case* the facilitator can sponsor for one
+ * settlement (`getNetworkConfig(network).facilitator.feeStroops`), never the
+ * caller-declared envelope fee: the scheme rebuilds the transaction and pays
+ * `minResourceFee + BASE_FEE`, so a caller can declare `fee: 100` while the
+ * facilitator sponsors 50000. Booking the declared number under-counts by up to
+ * the ratio of the two caps and lets the control be evaded by the party it
+ * bounds. The reservation is reconciled down to the fee actually charged after
+ * a successful settle (see {@link reconcileDailySpend}).
  *
  * Per-network keys: exhausting testnet does not block mainnet.
  * Fail closed: any store error refuses the settle.
  */
 export async function reserveDailySpend(
   network: NetworkName,
-  feeStroops: number,
+  amountStroops: number,
   ceilingStroops: number,
   store: SpendStore = redis,
 ): Promise<GuardRefusal | { ok: true }> {
   const key = dailySpendKey(network)
   try {
-    const newTotal = await store.incrby(key, feeStroops)
+    const newTotal = await store.incrby(key, amountStroops)
     // Survive process restart; TTL covers a UTC day boundary with margin.
-    await store.expire(key, 60 * 60 * 48)
+    try {
+      await store.expire(key, 60 * 60 * 48)
+    } catch (expireErr) {
+      // The increment landed but the TTL did not, so this reservation would
+      // never expire and the ceiling would drift down permanently. Undo it
+      // before failing closed.
+      await store.decrby(key, amountStroops).catch(() => undefined)
+      throw expireErr
+    }
 
     if (newTotal > ceilingStroops) {
-      await store.decrby(key, feeStroops)
+      await store.decrby(key, amountStroops)
       return {
         ok: false,
         reason: 'daily_cap',
-        feeStroops,
+        feeStroops: amountStroops,
         errorMessage: `Daily facilitator spend ceiling reached for ${network} (${ceilingStroops} stroops).`,
       }
     }
@@ -169,7 +198,7 @@ export async function reserveDailySpend(
     return {
       ok: false,
       reason: 'store_unavailable',
-      feeStroops,
+      feeStroops: amountStroops,
       errorMessage: 'Spend ledger unavailable; refusing settle (fail-closed).',
     }
   }
@@ -185,5 +214,41 @@ export async function releaseDailySpend(
     await store.decrby(dailySpendKey(network), feeStroops)
   } catch {
     // Best-effort rollback; the key expires in 48h regardless.
+  }
+}
+
+/**
+ * Best-effort downward reconciliation of a worst-case daily reservation.
+ *
+ * {@link reserveDailySpend} books the full per-settlement ceiling, so after a
+ * successful settle we read the fee the ledger actually charged (`feeCharged`
+ * from the transaction result) and release the unused headroom. The ledger's
+ * number is authoritative; the reservation is only a conservative pre-charge.
+ *
+ * If the transaction cannot be read, or is not yet SUCCESS, the full
+ * reservation stands — the ceiling over-counts rather than under-counts, which
+ * is the safe direction. Best-effort by design: reconciliation must never turn
+ * a successful settle into a failure.
+ */
+export async function reconcileDailySpend(
+  network: NetworkName,
+  reservedStroops: number,
+  txHash: string,
+  store: SpendStore = redis,
+): Promise<void> {
+  try {
+    const server = new rpc.Server(getNetworkConfig(network).rpc.url)
+    const tx = await server.getTransaction(txHash)
+    if (tx.status !== 'SUCCESS') return
+
+    // `resultXdr` is the TransactionResult; its `feeCharged` is an Int64 of the
+    // stroops the ledger actually deducted.
+    const feeCharged = Number(tx.resultXdr.feeCharged.toString())
+    if (!Number.isSafeInteger(feeCharged) || feeCharged < 0) return
+
+    const unused = reservedStroops - feeCharged
+    if (unused > 0) await releaseDailySpend(network, unused, store)
+  } catch {
+    // Keep the conservative reservation when the ledger is unreadable.
   }
 }

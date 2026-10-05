@@ -9,11 +9,12 @@ import {
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
 
-const { mockCreate, mockFindUnique, mockUpdate, mockGetFacilitator, mockSettle, mockGetTransaction } = vi.hoisted(
+const { mockCreate, mockFindUnique, mockUpdate, mockDelete, mockGetFacilitator, mockSettle, mockGetTransaction } = vi.hoisted(
   () => ({
     mockCreate: vi.fn(),
     mockFindUnique: vi.fn(),
     mockUpdate: vi.fn(),
+    mockDelete: vi.fn(),
     mockGetFacilitator: vi.fn(),
     mockSettle: vi.fn(),
     mockGetTransaction: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock('../db', () => ({
       create: mockCreate,
       findUnique: mockFindUnique,
       update: mockUpdate,
+      delete: mockDelete,
     },
   },
 }))
@@ -94,7 +96,7 @@ function settleBody(
       network: overrides.network ?? 'stellar:testnet',
       amount: '1000000',
       asset: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-      payTo: 'G' + 'A'.repeat(55),
+      payTo: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
       maxTimeoutSeconds: 60,
     },
   }
@@ -115,6 +117,7 @@ beforeEach(() => {
   mockCreate.mockReset().mockResolvedValue({ id: 'attempt-1' })
   mockFindUnique.mockReset().mockResolvedValue(null)
   mockUpdate.mockReset().mockResolvedValue({})
+  mockDelete.mockReset().mockResolvedValue({})
   mockSettle.mockReset().mockResolvedValue({
     success: true,
     transaction: 'onchain-hash',

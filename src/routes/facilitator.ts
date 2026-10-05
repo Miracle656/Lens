@@ -8,6 +8,7 @@ import {
   assertCallerAllowed,
   assertFeeWithinCap,
   FACILITATOR_DECLINED,
+  reconcileDailySpend,
   releaseDailySpend,
   reserveDailySpend,
   type GuardRefusal,
@@ -276,19 +277,51 @@ export async function registerSettleRoute(app: FastifyInstance) {
         )
       }
 
-      return resolveFromLedger(existing!.id, txHash, network, caip2)
+      if (!existing) {
+        // The row was withdrawn between the unique-constraint rejection and this
+        // read: a concurrent attempt was refused by a guard before submitting
+        // and cleaned its row up. Nothing reached the ledger, so the honest
+        // answer is "retry" rather than throwing on a non-null assertion.
+        return settleFailure(
+          txHash,
+          caip2,
+          SETTLE_ERROR_REASONS.unexpected,
+          'A concurrent attempt for this payload was withdrawn before submission; please retry.',
+        )
+      }
+
+      return resolveFromLedger(existing.id, txHash, network, caip2)
     }
 
     // Daily ceiling — only for new attempts. Fail closed on store outage.
+    //
+    // Book the *worst case* the scheme can sponsor, not `feeStroops`. The
+    // envelope's `fee` is caller-supplied and the scheme discards it, rebuilding
+    // the transaction on the facilitator's own account and paying
+    // `minResourceFee + BASE_FEE` (bounded by `facilitator.feeStroops`, i.e.
+    // `maxTransactionFeeStroops`). Booking the declared fee would let a caller
+    // set `fee: 100` and consume ~1/500th of its real exposure from the ledger.
+    // The reservation is reconciled down to `feeCharged` after a successful
+    // settle, and released in full if settlement aborts before submission.
     const ceiling = getNetworkConfig(network).facilitator.dailySpendCeilingStroops
-    const reserved = await reserveDailySpend(network, feeStroops, ceiling)
+    const reservedStroops = getNetworkConfig(network).facilitator.feeStroops
+    const reserved = await reserveDailySpend(network, reservedStroops, ceiling)
     if (!reserved.ok) {
       req.log.warn(
-        { network, txHash, reason: reserved.reason, feeStroops, ceiling },
+        { network, txHash, reason: reserved.reason, feeStroops, reservedStroops, ceiling },
         '[facilitator] settle refused by daily spend ceiling',
       )
       const response = declineFromGuard(txHash, caip2, reserved)
-      await finalise(attemptId, 'failed', response)
+      // Withdraw the pre-submission row instead of finalising it as a terminal
+      // `failed`. A daily-cap refusal is a routine, self-healing condition — it
+      // clears at the next UTC midnight — but the idempotency path above replays
+      // a stored `failed` as the payload's final answer, so finalising here
+      // would brick the payer's payload permanently and hand back this 403 for
+      // every later attempt. Nothing was submitted (the reservation is taken
+      // before `facilitator.settle`), so dropping the row — and the implicit
+      // "payload consumed" lock that comes with it — makes the payload
+      // retryable rather than poisoning it.
+      await prisma.settlementAttempt.delete({ where: { id: attemptId } }).catch(() => undefined)
       return reply.code(403).send(response)
     }
 
@@ -301,12 +334,17 @@ export async function registerSettleRoute(app: FastifyInstance) {
         ...(response.success ? {} : { errorReason: response.errorReason ?? SETTLE_ERROR_REASONS.unexpected }),
       }
 
+      // Release the unused headroom down to what the ledger actually charged.
+      if (normalised.success) {
+        await reconcileDailySpend(network, reservedStroops, normalised.transaction)
+      }
+
       await finalise(attemptId, normalised.success ? 'settled' : 'failed', normalised)
       return normalised
     } catch (err) {
       // Submission never landed — release the daily reservation so a later
       // legitimate settle is not charged for an aborted attempt.
-      await releaseDailySpend(network, feeStroops)
+      await releaseDailySpend(network, reservedStroops)
       const response = settleFailure(txHash, caip2, SETTLE_ERROR_REASONS.unexpected, (err as Error).message)
       await finalise(attemptId, 'failed', response)
       return response

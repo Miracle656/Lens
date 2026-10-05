@@ -14,20 +14,24 @@ const {
   mockCreate,
   mockFindUnique,
   mockUpdate,
+  mockDelete,
   mockGetFacilitator,
   mockSettle,
   mockIncrby,
   mockDecrby,
   mockExpire,
+  mockReconcileDailySpend,
 } = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockFindUnique: vi.fn(),
   mockUpdate: vi.fn(),
+  mockDelete: vi.fn(),
   mockGetFacilitator: vi.fn(),
   mockSettle: vi.fn(),
   mockIncrby: vi.fn(),
   mockDecrby: vi.fn(),
   mockExpire: vi.fn(),
+  mockReconcileDailySpend: vi.fn(),
 }))
 
 vi.mock('../db', () => ({
@@ -36,6 +40,7 @@ vi.mock('../db', () => ({
       create: mockCreate,
       findUnique: mockFindUnique,
       update: mockUpdate,
+      delete: mockDelete,
     },
   },
 }))
@@ -51,6 +56,15 @@ vi.mock('../redis', () => ({
 vi.mock('../x402/facilitator', async importOriginal => {
   const actual = (await importOriginal()) as Record<string, unknown>
   return { ...actual, getFacilitator: mockGetFacilitator }
+})
+
+// Keep the ledger read out of the unit app: on a successful settle the route
+// reconciles the worst-case reservation down to the fee actually charged by
+// calling rpc.getTransaction, which would be a real network call here. Only
+// `reconcileDailySpend` is replaced — the rest of the guard module stays real.
+vi.mock('../x402/settleGuards', async importOriginal => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return { ...actual, reconcileDailySpend: mockReconcileDailySpend }
 })
 
 import {
@@ -90,7 +104,7 @@ function settleBody(transaction = LOW_FEE_ENVELOPE, network = 'stellar:testnet')
       network,
       amount: '1000000',
       asset: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-      payTo: 'G' + 'A'.repeat(55),
+      payTo: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
       maxTimeoutSeconds: 60,
     },
   }
@@ -110,6 +124,7 @@ beforeEach(() => {
   mockCreate.mockReset().mockResolvedValue({ id: 'attempt-1' })
   mockFindUnique.mockReset().mockResolvedValue(null)
   mockUpdate.mockReset().mockResolvedValue({})
+  mockDelete.mockReset().mockResolvedValue({})
   mockSettle.mockReset().mockResolvedValue({
     success: true,
     transaction: 'onchain-hash',
@@ -120,6 +135,7 @@ beforeEach(() => {
   mockIncrby.mockReset().mockResolvedValue(100)
   mockDecrby.mockReset().mockResolvedValue(0)
   mockExpire.mockReset().mockResolvedValue(1)
+  mockReconcileDailySpend.mockReset().mockResolvedValue(undefined)
   delete process.env.FACILITATOR_ALLOWED_ORIGINS
 })
 
@@ -216,19 +232,42 @@ describe('POST /settle — hardening (#147)', () => {
     expect(res.json().errorReason).toBe(SETTLE_ERROR_REASONS.declined)
     expect(res.json().errorMessage).toMatch(/Daily facilitator spend ceiling/)
     expect(mockSettle).not.toHaveBeenCalled()
-    expect(mockUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ state: 'failed' }) }),
-    )
+    // The pre-submission row is withdrawn, not finalised as terminal `failed`:
+    // a stored decline would be replayed as this payload's final answer forever.
+    expect(mockDelete).toHaveBeenCalledWith({ where: { id: 'attempt-1' } })
+    expect(mockUpdate).not.toHaveBeenCalled()
   })
 
-  it('tracks daily spend under a per-network redis key', async () => {
+  it('does not brick a payload the daily ceiling declined', async () => {
+    mockIncrby.mockResolvedValueOnce(100_000_001) // first attempt: cap reached
+    const app = await buildApp()
+    const body = settleBody()
+
+    const first = await app.inject({ method: 'POST', url: '/settle', payload: body })
+    expect(first.statusCode).toBe(403)
+    expect(mockSettle).not.toHaveBeenCalled()
+
+    // Once the ceiling clears (next UTC day, or a reconciled reservation), the
+    // same payload must settle rather than replay the withdrawn decline.
+    const second = await app.inject({ method: 'POST', url: '/settle', payload: body })
+    expect(second.statusCode).toBe(200)
+    expect(second.json().success).toBe(true)
+    expect(mockSettle).toHaveBeenCalledTimes(1)
+  })
+
+  it('books the worst-case per-settlement fee, not the caller-declared envelope fee', async () => {
     const app = await buildApp()
     await app.inject({ method: 'POST', url: '/settle', payload: settleBody() })
 
+    // Default FACILITATOR_FEE_STROOPS is 50000 while the envelope declares 100.
+    // The ledger must reserve 50000, or a caller declaring `fee: 100` could
+    // consume ~1/500th of its real exposure and evade the ceiling.
     expect(mockIncrby).toHaveBeenCalledWith(
       expect.stringContaining('lens:facilitator:daily-spend:testnet:'),
-      100,
+      50000,
     )
+    // …and the reservation is reconciled down to the fee the ledger charged.
+    expect(mockReconcileDailySpend).toHaveBeenCalledWith('testnet', 50000, 'onchain-hash')
   })
 
   it('does not share daily ceilings across networks', async () => {
